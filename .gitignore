@@ -4,6 +4,7 @@ config.yaml
 .venv/
 __pycache__/
 *.py[cod]
+.cursor
 
 # uv
 .python-version

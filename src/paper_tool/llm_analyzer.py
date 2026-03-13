@@ -165,6 +165,10 @@ class LLMAnalyzer:
             _dbg(f"Raw Response ({len(raw)} chars)", raw)
 
         if self._cfg.llm_note_format == "freeform":
+            if metadata.source == metadata.source.ARXIV:
+                alphaxiv_url = f"https://alphaxiv.org/abs/{metadata.paper_id}"
+                bookmark = f"[🔖 alphaXiv · {metadata.paper_id}]({alphaxiv_url})\n\n"
+                raw = bookmark + raw
             return PaperNote(raw_content=raw)
 
         return _parse_response(raw)

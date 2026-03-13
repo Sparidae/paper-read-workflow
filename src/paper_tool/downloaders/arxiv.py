@@ -19,11 +19,14 @@ def _extract_arxiv_id(url: str) -> str:
       - https://arxiv.org/abs/2301.00001
       - https://arxiv.org/abs/2301.00001v2
       - https://arxiv.org/pdf/2301.00001
+      - https://arxiv.org/pdf/2301.00001v2
       - https://arxiv.org/pdf/2301.00001.pdf
+      - https://alphaxiv.org/abs/2301.00001
+      - https://alphaxiv.org/abs/2301.00001v2
       - 2301.00001  (bare ID)
     """
     patterns = [
-        r"arxiv\.org/(?:abs|pdf)/([0-9]{4}\.[0-9]{4,5}(?:v\d+)?)",
+        r"(?:arxiv|alphaxiv)\.org/(?:abs|pdf)/([0-9]{4}\.[0-9]{4,5}(?:v\d+)?)",
         r"^([0-9]{4}\.[0-9]{4,5}(?:v\d+)?)$",
     ]
     for pattern in patterns:

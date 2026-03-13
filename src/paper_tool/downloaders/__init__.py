@@ -10,11 +10,11 @@ __all__ = ["BaseDownloader", "ArxivDownloader", "OpenReviewDownloader"]
 def get_downloader(url: str) -> BaseDownloader:
     """Auto-detect paper source from URL and return the appropriate downloader."""
     url_lower = url.lower()
-    if "arxiv.org" in url_lower:
+    if "arxiv.org" in url_lower or "alphaxiv.org" in url_lower:
         return ArxivDownloader()
     if "openreview.net" in url_lower:
         return OpenReviewDownloader()
     raise ValueError(
         f"Unsupported URL: {url!r}\n"
-        "Supported sources: arxiv.org, openreview.net"
+        "Supported sources: arxiv.org, alphaxiv.org, openreview.net"
     )
