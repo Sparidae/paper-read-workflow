@@ -1,0 +1,58 @@
+# ============================================================
+# paper-tool 配置文件
+# ============================================================
+
+# LLM 配置
+llm:
+  # 使用的模型，litellm 格式，例如：
+  #   OpenAI 官方:          "openai/gpt-4o"
+  #   OpenAI 兼容端点:      "openai/your-model-name"  （配合 .env 中的 OPENAI_BASE_URL）
+  #   DeepSeek:             "openai/deepseek-chat"     （OPENAI_BASE_URL=https://api.deepseek.com/v1）
+  #   Kimi:                 "openai/moonshot-v1-8k"    （OPENAI_BASE_URL=https://api.moonshot.cn/v1）
+  #   通义千问:             "openai/qwen-max"          （OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1）
+  #   Claude:               "anthropic/claude-3-5-sonnet-20241022"
+  #   Gemini:               "gemini/gemini-2.0-flash"
+  #   Ollama 本地:          "ollama/qwen2.5:72b"
+  model: "openai/gpt-4o"
+  # 分析论文时最大输入 token 数（防止超出模型限制，超出时截断 PDF 文本）
+  max_input_tokens: 100000
+  # 生成笔记时最大输出 token 数
+  max_output_tokens: 4000
+  # 分类器专用 token 上限；思考模型（如 kimi-k2.5）CoT 过程会消耗大量 token，需要设大
+  classifier_max_tokens: 8000
+  # 温度（0.0 = 确定性输出，适合摘要任务）
+  temperature: 0.2
+  # 笔记输出格式：
+  #   json     - 模型输出结构化 JSON，解析后写入带标题的 Notion 块（默认）
+  #   freeform - 模型输出任意文本，直接原样写入 Notion（自由发挥提示词）
+  note_format: "json"
+  # 提示词文件路径（相对于项目根目录）；注释掉则使用代码内置默认值
+  analyzer_prompt: "prompts/analyzer.md"
+  classifier_prompt: "prompts/classifier.md"
+
+# PDF 存储配置
+storage:
+  # PDF 文件存储目录（相对于项目根目录，或绝对路径）
+  papers_dir: "papers"
+
+# Notion 配置
+notion:
+  # 数据库属性名称映射（如果你的数据库属性名不同，在这里修改）
+  properties:
+    title: "Title"           # 标题属性（必须是 title 类型）
+    authors: "Authors"       # 作者（rich_text）
+    abstract: "Abstract"     # 摘要（rich_text）
+    source: "Source"         # 来源平台（select: Arxiv/OpenReview）
+    url: "URL"               # 论文链接（url）
+    published_date: "Published Date"  # 发表日期（date）
+    added_date: "Added Date"          # 添加日期（date）
+    tags: "Tags"             # 标签/领域（multi_select）
+    paper_type: "Paper Type" # 论文类型（multi_select：Method/Theory/Benchmark 等）
+    institution: "Institution" # 来源机构（multi_select）
+    status: "Status"         # 阅读状态（select 或 checkbox）
+  # status 字段的类型：select 或 checkbox
+  # select: 值为 default_status 字符串
+  # checkbox: 新添加时设为 false（未读）
+  status_type: "select"
+  # 新添加论文的默认状态（仅 status_type 为 select 时生效）
+  default_status: "Unread"

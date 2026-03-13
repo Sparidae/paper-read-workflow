@@ -1,0 +1,21 @@
+# 环境和密钥（绝不提交）
+.env
+config.yaml
+.venv/
+__pycache__/
+*.py[cod]
+
+# uv
+.python-version
+
+# 下载的 PDF（通常较大，建议不纳入 git）
+papers/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 构建产物
+dist/
+*.egg-info/

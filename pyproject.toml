@@ -1,0 +1,27 @@
+[project]
+name = "paper-tool"
+version = "0.1.0"
+description = "Automated paper reading tool for Arxiv and OpenReview"
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.15.0",
+    "rich>=13.0.0",
+    "litellm>=1.0.0",
+    "notion-client==2.2.1",
+    "pymupdf>=1.24.0",
+    "arxiv>=2.0.0",
+    "openreview-py>=1.0.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+paper-tool = "paper_tool.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/paper_tool"]
