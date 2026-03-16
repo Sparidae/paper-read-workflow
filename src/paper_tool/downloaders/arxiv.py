@@ -13,6 +13,9 @@ from paper_tool.downloaders.base import BaseDownloader
 from paper_tool.models import PaperMetadata, PaperSource
 
 
+_ARXIV_ID_RE = re.compile(r"[0-9]{4}\.[0-9]{4,5}(?:v\d+)?")
+
+
 def _extract_arxiv_id(url: str) -> str:
     """
     Extract the Arxiv paper ID from various URL formats:
@@ -23,16 +26,15 @@ def _extract_arxiv_id(url: str) -> str:
       - https://arxiv.org/pdf/2301.00001.pdf
       - https://alphaxiv.org/abs/2301.00001
       - https://alphaxiv.org/abs/2301.00001v2
+      - https://huggingface.co/papers/2301.00001
+      - https://ar5iv.labs.google.com/html/2301.00001
       - 2301.00001  (bare ID)
+    Falls back to searching for an arxiv-style ID (YYMM.NNNNN) anywhere in the
+    input string, so new hosting sites are handled automatically.
     """
-    patterns = [
-        r"(?:arxiv|alphaxiv)\.org/(?:abs|pdf)/([0-9]{4}\.[0-9]{4,5}(?:v\d+)?)",
-        r"^([0-9]{4}\.[0-9]{4,5}(?:v\d+)?)$",
-    ]
-    for pattern in patterns:
-        m = re.search(pattern, url)
-        if m:
-            return m.group(1)
+    m = _ARXIV_ID_RE.search(url)
+    if m:
+        return m.group(0)
     raise ValueError(f"Could not extract Arxiv ID from URL: {url!r}")
 
 
