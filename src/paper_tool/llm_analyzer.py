@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from paper_tool.config import get_config
 from paper_tool.models import FigureInfo, PaperMetadata, PaperNote
+from paper_tool.retry import retry as _retry, with_retry as _with_retry
 
 if TYPE_CHECKING:
     pass
@@ -83,7 +84,7 @@ def _parse_response(raw: str) -> PaperNote:
     )
 
 
-def _llm_call(system: str, user: str) -> str:
+def _llm_call(system: str, user: str, *, max_tokens: int | None = None) -> str:
     """Single LLM call, returns raw response text. Raises on empty response."""
     import litellm
 
@@ -94,7 +95,7 @@ def _llm_call(system: str, user: str) -> str:
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        "max_tokens": 2048,
+        "max_tokens": max_tokens or cfg.llm_translator_max_tokens,
         "temperature": cfg.llm_temperature,
     }
     if cfg.openai_base_url:
@@ -119,13 +120,14 @@ def _strip_json_fence(raw: str) -> str:
     return cleaned.strip()
 
 
+@_retry(max_attempts=3, base_delay=3.0)
 def translate_captions(figures: list[FigureInfo]) -> list[FigureInfo]:
     """
     Translate figure captions to Chinese using a single LLM call.
 
     Returns a new list of FigureInfo with translated captions.
     Figures with empty captions are returned unchanged.
-    Raises on LLM or parsing failure (caller is responsible for handling).
+    Retries up to 3 times on LLM or JSON-parse failures.
     """
     to_translate = [(i, fig) for i, fig in enumerate(figures) if fig.caption.strip()]
     if not to_translate:
@@ -242,10 +244,12 @@ class LLMAnalyzer:
             kwargs["api_base"] = self._cfg.openai_base_url
 
         try:
-            response = litellm.completion(**kwargs)
+            response = _with_retry(
+                lambda: litellm.completion(**kwargs), max_attempts=3, base_delay=3.0,
+            )
         except Exception:
             if debug:
-                _dbg("LLM Call FAILED")
+                _dbg("LLM Call FAILED (all retries exhausted)")
                 traceback.print_exc()
             raise
 

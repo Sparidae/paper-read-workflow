@@ -11,6 +11,7 @@ import httpx
 
 from paper_tool.downloaders.base import BaseDownloader
 from paper_tool.models import PaperMetadata, PaperSource
+from paper_tool.retry import retry as _retry
 
 
 def _extract_forum_id(url: str) -> str:
@@ -40,6 +41,7 @@ class OpenReviewDownloader(BaseDownloader):
             kwargs["password"] = cfg.openreview_password
         return openreview.api.OpenReviewClient(**kwargs)
 
+    @_retry(max_attempts=3, base_delay=2.0)
     def fetch_metadata(self, url: str) -> PaperMetadata:
         forum_id = _extract_forum_id(url)
         client = self._get_client()

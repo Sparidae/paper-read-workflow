@@ -11,6 +11,7 @@ import httpx
 
 from paper_tool.downloaders.base import BaseDownloader
 from paper_tool.models import PaperMetadata, PaperSource
+from paper_tool.retry import retry as _retry
 
 
 _ARXIV_ID_RE = re.compile(r"[0-9]{4}\.[0-9]{4,5}(?:v\d+)?")
@@ -53,11 +54,11 @@ def _paper_dir(metadata: "PaperMetadata", dest_dir: Path) -> Path:
 class ArxivDownloader(BaseDownloader):
     """Downloads papers from arxiv.org using the arxiv Python package."""
 
+    @_retry(max_attempts=3, base_delay=2.0)
     def fetch_metadata(self, url: str) -> PaperMetadata:
         import arxiv
 
         paper_id = _extract_arxiv_id(url)
-        # Strip version suffix for search
         base_id = re.sub(r"v\d+$", "", paper_id)
 
         client = arxiv.Client()
@@ -138,12 +139,17 @@ class ArxivDownloader(BaseDownloader):
         _MAX_IMG_BYTES = 25 * 1024 * 1024  # skip anything above 25 MB before conversion
 
         try:
+            from paper_tool.retry import with_retry
+
             with httpx.Client(follow_redirects=True, timeout=60) as client:
-                response = client.get(src_url, headers=headers)
+                response = with_retry(
+                    lambda: client.get(src_url, headers=headers),
+                    max_attempts=3,
+                    base_delay=2.0,
+                )
                 response.raise_for_status()
 
                 content_type = response.headers.get("content-type", "")
-                # Arxiv returns application/pdf when source is not available
                 if "pdf" in content_type or len(response.content) < 1000:
                     return None
 

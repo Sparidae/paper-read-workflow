@@ -175,6 +175,11 @@ class Config:
         return self._yaml.get("llm", {}).get("classifier_max_tokens", 8000)
 
     @property
+    def llm_translator_max_tokens(self) -> int:
+        """Max tokens for figure caption translation. Thinking models need more budget."""
+        return self._yaml.get("llm", {}).get("translator_max_tokens", 8000)
+
+    @property
     def llm_temperature(self) -> float:
         return self._yaml.get("llm", {}).get("temperature", 0.2)
 

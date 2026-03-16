@@ -20,6 +20,10 @@ llm:
   max_output_tokens: 4000
   # 分类器专用 token 上限；思考模型（如 kimi-k2.5）CoT 过程会消耗大量 token，需要设大
   classifier_max_tokens: 8000
+  # 一句话摘要生成器专用 token 上限
+  summarizer_max_tokens: 8000
+  # 图片说明翻译专用 token 上限
+  translator_max_tokens: 8000
   # 温度（0.0 = 确定性输出，适合摘要任务）
   temperature: 0.2
   # 笔记输出格式：

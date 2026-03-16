@@ -12,6 +12,7 @@ import re
 
 from paper_tool.config import get_config
 from paper_tool.models import Classification, PaperMetadata
+from paper_tool.retry import with_retry as _with_retry
 
 
 _SYSTEM_PROMPT_TEMPLATE = """你是一位学术论文分类助手，负责为论文打标签。
@@ -189,10 +190,14 @@ class LLMClassifier:
                 _dbg(f"Retry {attempt}/{max_attempts - 1} — feeding parse error back to model")
 
             try:
-                response = litellm.completion(messages=messages, **kwargs)
+                response = _with_retry(
+                    lambda: litellm.completion(messages=messages, **kwargs),
+                    max_attempts=3,
+                    base_delay=3.0,
+                )
             except Exception:
                 if debug:
-                    _dbg("LLM Call FAILED")
+                    _dbg("LLM Call FAILED (all retries exhausted)")
                     traceback.print_exc()
                 raise
 

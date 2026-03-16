@@ -378,6 +378,19 @@ class NotionService:
         """Respect Notion's ~3 req/s rate limit."""
         time.sleep(0.35)
 
+    def _api_call(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        """Execute a Notion API call with retry on transient errors."""
+        for attempt in range(3):
+            try:
+                result = fn(*args, **kwargs)
+                self._rate_limit()
+                return result
+            except Exception:
+                if attempt == 2:
+                    raise
+                time.sleep(2 ** attempt)
+        raise RuntimeError("unreachable")
+
     def find_existing_page(self, paper_url: str) -> str | None:
         """Return the page ID if a page with this URL already exists."""
         url_prop = self._props.get("url", "URL")
@@ -430,14 +443,14 @@ class NotionService:
         }
 
         if self._status_type == "checkbox":
-            # checkbox: false = unread (haven't finished reading)
             properties[props["status"]] = {"checkbox": False}
         else:
             properties[props["status"]] = {
                 "select": {"name": self._default_status}
             }
 
-        response = self._client.pages.create(
+        response = self._api_call(
+            self._client.pages.create,
             parent={"database_id": self._database_id},
             properties=properties,
         )
@@ -448,13 +461,13 @@ class NotionService:
         prop_name = self._props.get("abstract", "")
         if not prop_name or not summary:
             return
-        self._client.pages.update(
+        self._api_call(
+            self._client.pages.update,
             page_id=page_id,
             properties={
                 prop_name: {"rich_text": _rich_text(summary[:2000])}
             },
         )
-        self._rate_limit()
 
     def update_classifications(self, page_id: str, classification: Classification) -> None:
         """Write classification tags (paper_type, research_areas, institutions) to page properties."""
@@ -475,8 +488,9 @@ class NotionService:
             }
 
         if prop_updates:
-            self._client.pages.update(page_id=page_id, properties=prop_updates)
-            self._rate_limit()
+            self._api_call(
+                self._client.pages.update, page_id=page_id, properties=prop_updates,
+            )
 
     def append_note(self, page_id: str, note: PaperNote) -> None:
         """Append note content blocks to the page body."""
@@ -489,11 +503,11 @@ class NotionService:
         batch_size = 100
         for i in range(0, len(blocks), batch_size):
             batch = blocks[i : i + batch_size]
-            self._client.blocks.children.append(
+            self._api_call(
+                self._client.blocks.children.append,
                 block_id=page_id,
                 children=batch,
             )
-            self._rate_limit()
 
     def get_page_url(self, page_id: str) -> str:
         """Return the Notion web URL for the page."""
@@ -507,6 +521,7 @@ class NotionService:
         Upload a single image file to Notion via the file upload API.
 
         Returns the file_upload_id on success, or None on failure.
+        Retries up to 3 times on transient errors.
 
         Three-step process (per Notion docs):
           1. POST /v1/file_uploads   → get id + upload_url
@@ -524,30 +539,33 @@ class NotionService:
             "Notion-Version": _NOTION_VERSION,
         }
 
-        try:
-            with httpx.Client(timeout=60) as http:
-                # Step 1: create upload object
-                r1 = http.post(
-                    f"{_NOTION_API}/file_uploads",
-                    headers=headers_json,
-                    json={"filename": image_path.name, "content_type": content_type},
-                )
-                r1.raise_for_status()
-                file_upload_id = r1.json()["id"]
-
-                # Step 2: send file contents as multipart
-                with open(image_path, "rb") as fh:
-                    r2 = http.post(
-                        f"{_NOTION_API}/file_uploads/{file_upload_id}/send",
-                        headers=headers_upload,
-                        files={"file": (image_path.name, fh, content_type)},
+        for attempt in range(3):
+            try:
+                with httpx.Client(timeout=60) as http:
+                    r1 = http.post(
+                        f"{_NOTION_API}/file_uploads",
+                        headers=headers_json,
+                        json={"filename": image_path.name, "content_type": content_type},
                     )
-                r2.raise_for_status()
+                    r1.raise_for_status()
+                    file_upload_id = r1.json()["id"]
 
-            return file_upload_id
+                    with open(image_path, "rb") as fh:
+                        r2 = http.post(
+                            f"{_NOTION_API}/file_uploads/{file_upload_id}/send",
+                            headers=headers_upload,
+                            files={"file": (image_path.name, fh, content_type)},
+                        )
+                    r2.raise_for_status()
 
-        except Exception:
-            return None
+                return file_upload_id
+
+            except Exception:
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+                    continue
+                return None
+        return None
 
     def _figure_blocks(self, fig: FigureInfo, upload_id: str) -> list[dict]:
         """Build the Notion blocks for a single figure (heading + image with caption)."""
@@ -621,11 +639,11 @@ class NotionService:
 
         batch_size = 100
         for i in range(0, len(final_blocks), batch_size):
-            self._client.blocks.children.append(
+            self._api_call(
+                self._client.blocks.children.append,
                 block_id=page_id,
                 children=final_blocks[i : i + batch_size],
             )
-            self._rate_limit()
 
         return len(uploads)
 
@@ -672,13 +690,12 @@ class NotionService:
             uploaded += 1
             self._rate_limit()
 
-        # Append all blocks in batches of 100
         batch_size = 100
         for i in range(0, len(blocks), batch_size):
-            self._client.blocks.children.append(
+            self._api_call(
+                self._client.blocks.children.append,
                 block_id=page_id,
                 children=blocks[i : i + batch_size],
             )
-            self._rate_limit()
 
         return uploaded
