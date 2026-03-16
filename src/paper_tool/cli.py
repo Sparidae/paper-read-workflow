@@ -174,11 +174,16 @@ def _process_paper(url: str, skip_llm: bool = False, debug: bool = False) -> boo
         # ── Step 6b-pre: Extract and translate figures (before note gen) ───
         figures = []
         if isinstance(downloader, ArxivDownloader) and tex_path is not None:
-            from paper_tool.figure_extractor import parse_figures
+            from paper_tool.figure_extractor import convert_pdf_figures, parse_figures
 
             task_fig = progress.add_task("[cyan]提取论文图片...", total=None)
             try:
                 figures_dir = downloader.get_figures_dir(metadata, cfg.papers_dir)
+                n_converted = convert_pdf_figures(figures_dir)
+                if n_converted:
+                    progress.console.print(
+                        f"  [dim]已将 {n_converted} 个 PDF 图片转换为 PNG[/dim]"
+                    )
                 figures = parse_figures(tex_path, figures_dir)
                 if figures:
                     _done(task_fig, f"[green]✓ 找到 {len(figures)} 张图片")

@@ -30,7 +30,16 @@ _INCLUDEGRAPHICS = re.compile(
 _LABEL = re.compile(r"\\label\{([^}]+)\}")
 
 
+# Strips LaTeX line comments: unescaped % to end of line
+_TEX_COMMENT = re.compile(r"(?<!\\)%.*")
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _strip_tex_comments(text: str) -> str:
+    """Remove LaTeX line comments (``%`` to end-of-line, ignoring ``\\%``)."""
+    return _TEX_COMMENT.sub("", text)
+
 
 def _extract_brace_content(text: str, pos: int) -> str:
     """Return content inside balanced braces, starting right after the '{' at pos."""
@@ -92,21 +101,50 @@ def _pdf_to_png(pdf_path: Path) -> Optional[Path]:
     Rasterise the first page of a PDF figure to a PNG using PyMuPDF.
     Returns the PNG path, or None on failure.
     """
+    import logging
+
+    log = logging.getLogger(__name__)
+    png_path = pdf_path.with_suffix(".png")
+    if png_path.exists():
+        return png_path
+
     try:
         import fitz  # PyMuPDF
 
         doc = fitz.open(str(pdf_path))
         if len(doc) == 0:
+            log.warning("PDF figure has no pages: %s", pdf_path.name)
             return None
         page = doc[0]
         # 2× scale gives ~150 dpi for a typical half-column figure → good quality
         mat = fitz.Matrix(2.0, 2.0)
         pix = page.get_pixmap(matrix=mat, alpha=False)
-        png_path = pdf_path.with_suffix(".png")
         pix.save(str(png_path))
+        doc.close()
         return png_path
-    except Exception:
+    except Exception as exc:
+        log.warning("Failed to convert PDF figure %s: %s", pdf_path.name, exc)
         return None
+
+
+def convert_pdf_figures(figures_dir: Path) -> int:
+    """
+    Batch-convert all PDF images in a figures directory to PNG.
+
+    Skips files that already have a corresponding .png.
+    Returns the number of successfully converted files.
+    """
+    if not figures_dir.is_dir():
+        return 0
+
+    converted = 0
+    for pdf_file in sorted(figures_dir.glob("*.pdf")):
+        if pdf_file.with_suffix(".png").exists():
+            continue
+        result = _pdf_to_png(pdf_file)
+        if result is not None:
+            converted += 1
+    return converted
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -140,7 +178,7 @@ def parse_figures(
     fig_number = 0
 
     for m in _FIGURE_ENV.finditer(tex):
-        env_text = m.group(1)
+        env_text = _strip_tex_comments(m.group(1))
 
         ig_match = _INCLUDEGRAPHICS.search(env_text)
         if not ig_match:
