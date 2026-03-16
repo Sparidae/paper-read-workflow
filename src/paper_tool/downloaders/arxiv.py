@@ -36,6 +36,18 @@ def _extract_arxiv_id(url: str) -> str:
     raise ValueError(f"Could not extract Arxiv ID from URL: {url!r}")
 
 
+def _paper_dir(metadata: "PaperMetadata", dest_dir: Path) -> Path:
+    """
+    Return (and create) the per-paper subdirectory:
+        dest_dir / {paper_id}_{safe_title}/
+    """
+    safe_title = re.sub(r'[\\/*?:"<>|]', "", metadata.title)
+    safe_title = safe_title.replace(" ", "_")[:80]
+    paper_dir = dest_dir / f"{metadata.paper_id}_{safe_title}"
+    paper_dir.mkdir(parents=True, exist_ok=True)
+    return paper_dir
+
+
 class ArxivDownloader(BaseDownloader):
     """Downloads papers from arxiv.org using the arxiv Python package."""
 
@@ -70,19 +82,14 @@ class ArxivDownloader(BaseDownloader):
 
     def download_pdf(self, metadata: PaperMetadata, dest_dir: Path) -> Path:
         """Download PDF via direct URL construction (faster than arxiv package download)."""
-        dest_dir.mkdir(parents=True, exist_ok=True)
-
-        # Sanitize title for filename
-        safe_title = re.sub(r'[\\/*?:"<>|]', "", metadata.title)
-        safe_title = safe_title.replace(" ", "_")[:80]
-        filename = f"{metadata.paper_id}_{safe_title}.pdf"
-        dest_path = dest_dir / filename
+        paper_dir = _paper_dir(metadata, dest_dir)
+        dest_path = paper_dir / "paper.pdf"
 
         if dest_path.exists():
             return dest_path
 
         pdf_url = f"https://arxiv.org/pdf/{metadata.paper_id}.pdf"
-        headers = {"User-Agent": "paper-tool/0.1 (https://github.com/user/paper-tool)"}
+        headers = {"User-Agent": "paper-tool/0.1"}
 
         with httpx.Client(follow_redirects=True, timeout=60) as client:
             for attempt in range(3):
@@ -109,18 +116,24 @@ class ArxivDownloader(BaseDownloader):
 
         Arxiv serves source as a tar.gz at https://arxiv.org/src/{id}.
         Some papers are PDF-only (no source available).
+
+        As a side effect, image files (png/jpg/jpeg/pdf) are extracted into
+        a figures/ subdirectory inside the paper's own directory.
         """
         dest_dir.mkdir(parents=True, exist_ok=True)
 
-        safe_title = re.sub(r'[\\/*?:"<>|]', "", metadata.title)
-        safe_title = safe_title.replace(" ", "_")[:80]
-        merged_path = dest_dir / f"{metadata.paper_id}_{safe_title}.tex"
+        paper_dir = _paper_dir(metadata, dest_dir)
+        merged_path = paper_dir / "paper.tex"
+        figures_dir = paper_dir / "figures"
 
-        if merged_path.exists():
+        if merged_path.exists() and figures_dir.exists():
             return merged_path
 
         src_url = f"https://arxiv.org/src/{metadata.paper_id}"
         headers = {"User-Agent": "paper-tool/0.1"}
+
+        _IMG_SUFFIXES = {".png", ".jpg", ".jpeg", ".pdf"}
+        _MAX_IMG_BYTES = 25 * 1024 * 1024  # skip anything above 25 MB before conversion
 
         try:
             with httpx.Client(follow_redirects=True, timeout=60) as client:
@@ -138,7 +151,11 @@ class ArxivDownloader(BaseDownloader):
                 try:
                     with tarfile.open(tar_path) as tar:
                         tex_contents: list[str] = []
+                        figures_dir.mkdir(parents=True, exist_ok=True)
+
                         for member in tar.getmembers():
+                            suffix = Path(member.name).suffix.lower()
+
                             if member.name.endswith(".tex"):
                                 f = tar.extractfile(member)
                                 if f:
@@ -148,6 +165,19 @@ class ArxivDownloader(BaseDownloader):
                                         )
                                     except Exception:
                                         pass
+
+                            elif suffix in _IMG_SUFFIXES and member.size <= _MAX_IMG_BYTES:
+                                # Flatten: save only the filename, drop subdirectory path
+                                fname = Path(member.name).name
+                                out_path = figures_dir / fname
+                                if not out_path.exists():
+                                    f = tar.extractfile(member)
+                                    if f:
+                                        try:
+                                            out_path.write_bytes(f.read())
+                                        except Exception:
+                                            pass
+
                         if not tex_contents:
                             return None
                         merged_path.write_text(
@@ -159,3 +189,7 @@ class ArxivDownloader(BaseDownloader):
             return merged_path
         except Exception:
             return None
+
+    def get_figures_dir(self, metadata: PaperMetadata, dest_dir: Path) -> Path:
+        """Return the figures directory path (may or may not exist yet)."""
+        return _paper_dir(metadata, dest_dir) / "figures"

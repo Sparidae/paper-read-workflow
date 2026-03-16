@@ -100,6 +100,7 @@ def _process_paper(url: str, skip_llm: bool = False, debug: bool = False) -> boo
 
         char_budget = cfg.llm_max_input_tokens * 4
         paper_text: str | None = None
+        tex_path: "Path | None" = None
         text_source = "PDF"
 
         if isinstance(downloader, ArxivDownloader):
@@ -170,14 +171,44 @@ def _process_paper(url: str, skip_llm: bool = False, debug: bool = False) -> boo
             except Exception as e:
                 _done(task6c, f"[yellow]⚠ 一句话摘要生成失败（已跳过）: {e}")
 
-        # ── Step 6b: LLM note generation (full paper text) ───────────────
+        # ── Step 6b-pre: Extract and translate figures (before note gen) ───
+        figures = []
+        if isinstance(downloader, ArxivDownloader) and tex_path is not None:
+            from paper_tool.figure_extractor import parse_figures
+
+            task_fig = progress.add_task("[cyan]提取论文图片...", total=None)
+            try:
+                figures_dir = downloader.get_figures_dir(metadata, cfg.papers_dir)
+                figures = parse_figures(tex_path, figures_dir)
+                if figures:
+                    _done(task_fig, f"[green]✓ 找到 {len(figures)} 张图片")
+                else:
+                    _done(task_fig, "[yellow]⚠ 未找到可用图片")
+            except Exception as e:
+                _done(task_fig, f"[yellow]⚠ 图片提取失败（已跳过）: {e}")
+                figures = []
+
+        if not skip_llm and figures:
+            from paper_tool.llm_analyzer import translate_captions
+
+            task_trans = progress.add_task("[cyan]翻译图片说明...", total=None)
+            try:
+                figures = translate_captions(figures)
+                _done(task_trans, "[green]✓ 图片说明翻译完成")
+            except Exception as e:
+                _done(task_trans, f"[yellow]⚠ 翻译失败（保留原文）: {e}")
+
+        # ── Step 6b: LLM note generation (with figure info for placement) ─
         if not skip_llm:
             task6b = progress.add_task(
                 f"[cyan]LLM 生成笔记 ({cfg.llm_model})...", total=None
             )
             try:
                 analyzer = LLMAnalyzer()
-                note = analyzer.analyze(metadata, pdf_text, debug=debug)
+                note = analyzer.analyze(
+                    metadata, pdf_text, debug=debug,
+                    figures=figures if figures else None,
+                )
                 _done(task6b, "[green]✓ 笔记生成完成")
             except Exception as e:
                 _done(task6b, f"[yellow]⚠ 笔记生成失败（已跳过）: {e}")
@@ -185,14 +216,25 @@ def _process_paper(url: str, skip_llm: bool = False, debug: bool = False) -> boo
         else:
             note = None
 
-        # ── Step 7: Write note blocks to Notion ───────────────────────────
+        # ── Step 7: Write note + figures to Notion ────────────────────────
         if note is not None:
-            task7 = progress.add_task("[cyan]将笔记写入 Notion...", total=None)
+            task7 = progress.add_task("[cyan]将笔记和图片写入 Notion...", total=None)
             try:
-                notion.append_note(page_id, note)
-                _done(task7, "[green]✓ 笔记写入完成")
+                if figures:
+                    n = notion.append_note_with_figures(page_id, note, figures)
+                    _done(task7, f"[green]✓ 笔记写入完成，上传 {n}/{len(figures)} 张图片")
+                else:
+                    notion.append_note(page_id, note)
+                    _done(task7, "[green]✓ 笔记写入完成")
             except Exception as e:
                 _done(task7, f"[yellow]⚠ 笔记写入失败: {e}")
+        elif figures:
+            task7 = progress.add_task("[cyan]上传论文图片...", total=None)
+            try:
+                n = notion.append_figures(page_id, figures)
+                _done(task7, f"[green]✓ 上传 {n}/{len(figures)} 张图片完成")
+            except Exception as e:
+                _done(task7, f"[yellow]⚠ 图片上传失败（已跳过）: {e}")
 
         progress.stop()
 
@@ -206,8 +248,8 @@ def _process_paper(url: str, skip_llm: bool = False, debug: bool = False) -> boo
                 (metadata.authors_str[:100] + "\n", ""),
                 ("来源: ", "bold"),
                 (metadata.source.value + "\n", ""),
-                ("PDF:  ", "bold"),
-                (str(pdf_path) + "\n", "dim"),
+                ("目录:  ", "bold"),
+                (str(pdf_path.parent) + "\n", "dim"),
                 ("Notion: ", "bold"),
                 (page_url, "link " + page_url),
             ),
@@ -482,7 +524,14 @@ def chat(
         error_console.print(f"[ERROR] {e}")
         raise typer.Exit(code=1)
 
-    console.print(f"\n[bold cyan]论文[/bold cyan]: {file_path.name}")
+    # For new per-paper subdirectory structure, show the directory name (more informative)
+    # than the generic "paper.tex" / "paper.pdf" filename.
+    display_name = (
+        file_path.parent.name
+        if file_path.name in ("paper.tex", "paper.pdf")
+        else file_path.name
+    )
+    console.print(f"\n[bold cyan]论文[/bold cyan]: {display_name}")
     console.print(f"[dim]模型: {cfg.llm_model}  |  加载论文文本中...[/dim]")
 
     try:

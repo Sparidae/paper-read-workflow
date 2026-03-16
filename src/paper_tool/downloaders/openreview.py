@@ -94,8 +94,9 @@ class OpenReviewDownloader(BaseDownloader):
 
         safe_title = re.sub(r'[\\/*?:"<>|]', "", metadata.title)
         safe_title = safe_title.replace(" ", "_")[:80]
-        filename = f"OR_{metadata.paper_id}_{safe_title}.pdf"
-        dest_path = dest_dir / filename
+        paper_dir = dest_dir / f"OR_{metadata.paper_id}_{safe_title}"
+        paper_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = paper_dir / "paper.pdf"
 
         if dest_path.exists():
             return dest_path

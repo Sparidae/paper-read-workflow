@@ -2,38 +2,158 @@
 
 from __future__ import annotations
 
+import mimetypes
+import re
 import time
 from datetime import date, datetime
-from typing import Any
+from pathlib import Path
+from typing import Any, Optional
+
+import httpx
 
 from paper_tool.config import get_config
-from paper_tool.models import Classification, PaperMetadata, PaperNote
+from paper_tool.models import Classification, FigureInfo, PaperMetadata, PaperNote
 
 
-# Notion API: single rich_text block content limit is 2000 chars
+# Notion API: single rich_text element content limit is 2000 chars
 _BLOCK_CHAR_LIMIT = 1900
 
+# Notion file upload API (uses direct httpx, not notion-client)
+_NOTION_VERSION = "2026-03-11"
+_NOTION_API = "https://api.notion.com/v1"
 
-def _chunk_text(text: str, limit: int = _BLOCK_CHAR_LIMIT) -> list[str]:
-    """Split text into chunks that fit within Notion's block size limit."""
+# File upload API uses a different version header
+_NOTION_API_VERSION = "2026-03-11"
+_NOTION_API_BASE = "https://api.notion.com/v1"
+
+# Inline Markdown pattern: links, bold+italic, bold, italic, inline code, inline math
+_INLINE_MD = re.compile(
+    r"\[([^\]\n]+)\]\(([^)\n]+)\)"  # [text](url)
+    r"|\*\*\*([^*\n]+)\*\*\*"       # ***bold italic***
+    r"|\*\*([^*\n]+)\*\*"           # **bold**
+    r"|\*([^*\n]+)\*"               # *italic*
+    r"|`([^`\n]+)`"                 # `code`
+    r"|\\\((.+?)\\\)"               # \(...\)  inline math
+    r"|\$([^$\n]+)\$"               # $...$ inline math
+)
+
+
+def _text_obj(
+    content: str,
+    bold: bool = False,
+    italic: bool = False,
+    code: bool = False,
+    url: str | None = None,
+) -> dict:
+    obj: dict = {
+        "type": "text",
+        "text": {"content": content},
+        "annotations": {
+            "bold": bold,
+            "italic": italic,
+            "strikethrough": False,
+            "underline": False,
+            "code": code,
+            "color": "default",
+        },
+    }
+    if url:
+        obj["text"]["link"] = {"url": url}
+    return obj
+
+
+def _equation_inline_obj(expr: str) -> dict:
+    """Notion inline equation rich_text object."""
+    return {"type": "equation", "equation": {"expression": expr.strip()}}
+
+
+def _parse_inline(text: str) -> list[dict]:
+    """
+    Parse inline Markdown into Notion rich_text objects.
+
+    Handles: [text](url), ***bold italic***, **bold**, *italic*, `code`,
+    \\(...\\) and $...$ inline math equations.
+    Plain text segments are kept as-is. Each element respects the 2000-char limit.
+    """
+    result: list[dict] = []
+    pos = 0
+
+    for m in _INLINE_MD.finditer(text):
+        # Plain text before this match
+        before = text[pos : m.start()]
+        if before:
+            for chunk in _split_str(before):
+                result.append(_text_obj(chunk))
+
+        link_label, link_url = m.group(1), m.group(2)
+        bold_italic = m.group(3)
+        bold = m.group(4)
+        italic = m.group(5)
+        code = m.group(6)
+        math_paren = m.group(7)   # \(...\)
+        math_dollar = m.group(8)  # $...$
+
+        if link_label is not None:
+            for chunk in _split_str(link_label):
+                result.append(_text_obj(chunk, url=link_url))
+        elif bold_italic is not None:
+            for chunk in _split_str(bold_italic):
+                result.append(_text_obj(chunk, bold=True, italic=True))
+        elif bold is not None:
+            for chunk in _split_str(bold):
+                result.append(_text_obj(chunk, bold=True))
+        elif italic is not None:
+            for chunk in _split_str(italic):
+                result.append(_text_obj(chunk, italic=True))
+        elif code is not None:
+            for chunk in _split_str(code):
+                result.append(_text_obj(chunk, code=True))
+        elif math_paren is not None:
+            result.append(_equation_inline_obj(math_paren))
+        elif math_dollar is not None:
+            result.append(_equation_inline_obj(math_dollar))
+
+        pos = m.end()
+
+    # Remaining plain text
+    tail = text[pos:]
+    if tail:
+        for chunk in _split_str(tail):
+            result.append(_text_obj(chunk))
+
+    return result or [_text_obj("")]
+
+
+def _split_str(text: str, limit: int = _BLOCK_CHAR_LIMIT) -> list[str]:
+    """Split a string into chunks within Notion's per-element size limit."""
     if len(text) <= limit:
         return [text]
-    chunks = []
-    while text:
-        chunks.append(text[:limit])
-        text = text[limit:]
-    return chunks
+    return [text[i : i + limit] for i in range(0, len(text), limit)]
 
 
 def _rich_text(content: str) -> list[dict]:
-    return [{"type": "text", "text": {"content": content}}]
+    """Plain text rich_text (no inline Markdown parsing). Used for metadata fields."""
+    return [{"type": "text", "text": {"content": content[:_BLOCK_CHAR_LIMIT]}}]
+
+
+def _rich_text_md(content: str) -> list[dict]:
+    """Rich_text with inline Markdown parsing. Used for note body blocks."""
+    return _parse_inline(content)
 
 
 def _paragraph_block(text: str) -> dict:
     return {
         "object": "block",
         "type": "paragraph",
-        "paragraph": {"rich_text": _rich_text(text)},
+        "paragraph": {"rich_text": _rich_text_md(text)},
+    }
+
+
+def _heading1_block(text: str) -> dict:
+    return {
+        "object": "block",
+        "type": "heading_1",
+        "heading_1": {"rich_text": _rich_text(text)},
     }
 
 
@@ -53,11 +173,19 @@ def _heading3_block(text: str) -> dict:
     }
 
 
-def _bullet_block(text: str) -> dict:
+def _equation_block(expr: str) -> dict:
+    return {
+        "object": "block",
+        "type": "equation",
+        "equation": {"expression": expr.strip()},
+    }
+
+
+def _bullet_block(rich: list[dict]) -> dict:
     return {
         "object": "block",
         "type": "bulleted_list_item",
-        "bulleted_list_item": {"rich_text": _rich_text(text)},
+        "bulleted_list_item": {"rich_text": rich},
     }
 
 
@@ -66,43 +194,110 @@ def _divider_block() -> dict:
 
 
 def _text_to_blocks(text: str) -> list[dict]:
-    """Convert plain text into Notion paragraph blocks, respecting size limits."""
-    blocks = []
-    for chunk in _chunk_text(text):
-        blocks.append(_paragraph_block(chunk))
-    return blocks
+    """Convert plain text into Notion paragraph blocks."""
+    return [_paragraph_block(text)]
+
+
+_FIGURE_MARKER = re.compile(r"^\[FIGURE[:\s]*(\d+)\]$", re.IGNORECASE)
 
 
 def _freeform_to_blocks(text: str) -> list[dict]:
     """
-    Convert freeform text (Markdown-ish) into Notion blocks.
+    Convert freeform Markdown text into Notion blocks.
 
-    Supports:
-      ## Heading  → heading_2
-      ### Heading → heading_3
-      - item      → bulleted_list_item
-      blank line  → paragraph separator (skipped)
-      other text  → paragraph (chunked if > limit)
+    Structural elements:
+      #        → heading_1
+      ##       → heading_2
+      ###      → heading_3
+      - / *    → bulleted_list_item
+      ---      → divider
+      $$...$$  → equation block (single-line or multi-line fence)
+      \\[...\\]  → equation block (single-line or multi-line fence)
+      blank    → skipped
+
+    Inline Markdown (**bold**, *italic*, `code`, [text](url), $...$) is
+    parsed within each block via _parse_inline().
     """
     blocks: list[dict] = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+
+        # ── Block equation: $$ ... $$ ────────────────────────────────
+        if stripped == "$$" or stripped.startswith("$$") and stripped.endswith("$$") and len(stripped) > 4:
+            if stripped.startswith("$$") and stripped.endswith("$$") and len(stripped) > 4:
+                # Single-line: $$expr$$
+                expr = stripped[2:-2]
+                blocks.append(_equation_block(expr))
+                i += 1
+                continue
+            # Opening $$ fence — collect until closing $$
+            expr_lines: list[str] = []
+            i += 1
+            while i < len(lines) and lines[i].strip() != "$$":
+                expr_lines.append(lines[i])
+                i += 1
+            i += 1  # skip closing $$
+            blocks.append(_equation_block("\n".join(expr_lines)))
             continue
-        if stripped.startswith("### "):
+
+        # ── Block equation: \[ ... \] ────────────────────────────────
+        if stripped == r"\[" or (stripped.startswith(r"\[") and stripped.endswith(r"\]") and len(stripped) > 4):
+            if stripped.startswith(r"\[") and stripped.endswith(r"\]") and len(stripped) > 4:
+                expr = stripped[2:-2]
+                blocks.append(_equation_block(expr))
+                i += 1
+                continue
+            expr_lines = []
+            i += 1
+            while i < len(lines) and lines[i].strip() != r"\]":
+                expr_lines.append(lines[i])
+                i += 1
+            i += 1
+            blocks.append(_equation_block("\n".join(expr_lines)))
+            continue
+
+        if not stripped:
+            i += 1
+            continue
+
+        fig_m = _FIGURE_MARKER.match(stripped)
+        if fig_m:
+            blocks.append({"_figure_placeholder": int(fig_m.group(1))})
+            i += 1
+            continue
+
+        if stripped == "---":
+            blocks.append(_divider_block())
+        elif stripped.startswith("#### ") or re.match(r"^#{4,} ", stripped):
+            # Demote H4+ to heading_3
+            text = re.sub(r"^#{4,} ", "", stripped)
+            blocks.append(_heading3_block(text.strip()))
+        elif stripped.startswith("### "):
             blocks.append(_heading3_block(stripped[4:].strip()))
         elif stripped.startswith("## "):
             blocks.append(_heading2_block(stripped[3:].strip()))
         elif stripped.startswith("# "):
-            blocks.append(_heading2_block(stripped[2:].strip()))
+            blocks.append(_heading1_block(stripped[2:].strip()))
         elif stripped.startswith("- ") or stripped.startswith("* "):
             item = stripped[2:].strip()
-            for chunk in _chunk_text(item):
-                blocks.append(_bullet_block(chunk))
+            blocks.append(_bullet_block(_rich_text_md(item)))
         else:
-            for chunk in _chunk_text(stripped):
-                blocks.append(_paragraph_block(chunk))
+            blocks.append(_paragraph_block(stripped))
+        i += 1
     return blocks
+
+
+def _get_heading_text(block: dict) -> "str | None":
+    """Extract the plain text content from a heading_1/2/3 block, or None."""
+    for htype in ("heading_1", "heading_2", "heading_3"):
+        if block.get("type") == htype:
+            rich = block.get(htype, {}).get("rich_text", [])
+            return "".join(
+                rt.get("text", {}).get("content", "") for rt in rich
+            )
+    return None
 
 
 def _note_to_blocks(note: PaperNote) -> list[dict]:
@@ -123,8 +318,7 @@ def _note_to_blocks(note: PaperNote) -> list[dict]:
         blocks.append(_heading2_block(heading))
         if isinstance(content, list):
             for item in content:
-                for chunk in _chunk_text(item):
-                    blocks.append(_bullet_block(chunk))
+                blocks.append(_bullet_block(_rich_text_md(item)))
         else:
             blocks.extend(_text_to_blocks(content))
 
@@ -138,7 +332,8 @@ class NotionService:
         from notion_client import Client
 
         cfg = get_config()
-        self._client = Client(auth=cfg.notion_token)
+        self._token = cfg.notion_token
+        self._client = Client(auth=self._token)
         self._database_id = cfg.notion_database_id
         self._props = cfg.notion_properties
         self._status_type = cfg.notion_status_type
@@ -304,3 +499,186 @@ class NotionService:
         """Return the Notion web URL for the page."""
         clean_id = page_id.replace("-", "")
         return f"https://www.notion.so/{clean_id}"
+
+    # ── Figure upload ─────────────────────────────────────────────────────────
+
+    def _upload_file(self, image_path: Path) -> Optional[str]:
+        """
+        Upload a single image file to Notion via the file upload API.
+
+        Returns the file_upload_id on success, or None on failure.
+
+        Three-step process (per Notion docs):
+          1. POST /v1/file_uploads   → get id + upload_url
+          2. POST /v1/file_uploads/{id}/send  → upload multipart binary
+          3. Return the id for use in image blocks
+        """
+        content_type = mimetypes.guess_type(str(image_path))[0] or "image/png"
+        headers_json = {
+            "Authorization": f"Bearer {self._token}",
+            "Content-Type": "application/json",
+            "Notion-Version": _NOTION_VERSION,
+        }
+        headers_upload = {
+            "Authorization": f"Bearer {self._token}",
+            "Notion-Version": _NOTION_VERSION,
+        }
+
+        try:
+            with httpx.Client(timeout=60) as http:
+                # Step 1: create upload object
+                r1 = http.post(
+                    f"{_NOTION_API}/file_uploads",
+                    headers=headers_json,
+                    json={"filename": image_path.name, "content_type": content_type},
+                )
+                r1.raise_for_status()
+                file_upload_id = r1.json()["id"]
+
+                # Step 2: send file contents as multipart
+                with open(image_path, "rb") as fh:
+                    r2 = http.post(
+                        f"{_NOTION_API}/file_uploads/{file_upload_id}/send",
+                        headers=headers_upload,
+                        files={"file": (image_path.name, fh, content_type)},
+                    )
+                r2.raise_for_status()
+
+            return file_upload_id
+
+        except Exception:
+            return None
+
+    def _figure_blocks(self, fig: FigureInfo, upload_id: str) -> list[dict]:
+        """Build the Notion blocks for a single figure (heading + image with caption)."""
+        label = f"Figure {fig.number}"
+        if fig.label:
+            label += f"  ({fig.label})"
+        return [
+            _heading3_block(label),
+            {
+                "object": "block",
+                "type": "image",
+                "image": {
+                    "type": "file_upload",
+                    "file_upload": {"id": upload_id},
+                    "caption": _rich_text_md(fig.caption) if fig.caption else [],
+                },
+            },
+        ]
+
+    def append_note_with_figures(
+        self,
+        page_id: str,
+        note: PaperNote,
+        figures: list[FigureInfo],
+    ) -> int:
+        """
+        Append note blocks to the page, with figures injected at [FIGURE:N] markers.
+
+        The note's raw_content should contain [FIGURE:N] markers placed by the LLM.
+        _freeform_to_blocks converts these into placeholder dicts.
+        This method replaces each placeholder with actual uploaded image blocks.
+        Figures not referenced by any marker are appended at the end.
+
+        Returns the number of successfully uploaded figures.
+        """
+        if note.is_freeform:
+            content_blocks = _freeform_to_blocks(note.raw_content or "")
+        else:
+            content_blocks = _note_to_blocks(note)
+
+        fig_map: dict[int, FigureInfo] = {fig.number: fig for fig in figures}
+        uploads: dict[int, str] = {}
+        for fig in figures:
+            uid = self._upload_file(fig.image_path)
+            if uid is not None:
+                uploads[fig.number] = uid
+            self._rate_limit()
+
+        placed: set[int] = set()
+        final_blocks: list[dict] = [_divider_block(), _heading2_block("AI 分析笔记")]
+
+        for block in content_blocks:
+            fig_num = block.get("_figure_placeholder")
+            if fig_num is not None:
+                if fig_num in uploads:
+                    final_blocks.extend(
+                        self._figure_blocks(fig_map[fig_num], uploads[fig_num])
+                    )
+                    placed.add(fig_num)
+            else:
+                final_blocks.append(block)
+
+        unplaced = [
+            fig for fig in figures
+            if fig.number not in placed and fig.number in uploads
+        ]
+        if unplaced:
+            final_blocks += [_divider_block(), _heading2_block("论文核心图表")]
+            for fig in unplaced:
+                final_blocks.extend(self._figure_blocks(fig, uploads[fig.number]))
+
+        batch_size = 100
+        for i in range(0, len(final_blocks), batch_size):
+            self._client.blocks.children.append(
+                block_id=page_id,
+                children=final_blocks[i : i + batch_size],
+            )
+            self._rate_limit()
+
+        return len(uploads)
+
+    def append_figures(self, page_id: str, figures: list[FigureInfo]) -> int:
+        """
+        Upload figures and append them to the Notion page as image blocks.
+
+        Each figure becomes:
+          - A heading_3 block: "Figure N"
+          - An image block (Notion-hosted via file_upload)
+          - A paragraph block with the caption (if any)
+
+        Returns the number of figures successfully uploaded.
+        """
+        if not figures:
+            return 0
+
+        blocks: list[dict] = [
+            _divider_block(),
+            _heading2_block("论文核心图表"),
+        ]
+
+        uploaded = 0
+        for fig in figures:
+            file_upload_id = self._upload_file(fig.image_path)
+            if file_upload_id is None:
+                continue
+
+            label = f"Figure {fig.number}"
+            if fig.label:
+                label += f"  ({fig.label})"
+            blocks.append(_heading3_block(label))
+
+            blocks.append({
+                "object": "block",
+                "type": "image",
+                "image": {
+                    "type": "file_upload",
+                    "file_upload": {"id": file_upload_id},
+                    "caption": _rich_text_md(fig.caption) if fig.caption else [],
+                },
+            })
+
+            uploaded += 1
+            self._rate_limit()
+
+        # Append all blocks in batches of 100
+        batch_size = 100
+        for i in range(0, len(blocks), batch_size):
+            self._client.blocks.children.append(
+                block_id=page_id,
+                children=blocks[i : i + batch_size],
+            )
+            self._rate_limit()
+
+        return uploaded

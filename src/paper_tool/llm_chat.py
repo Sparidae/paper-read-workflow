@@ -28,33 +28,52 @@ def find_paper_file(query: str, papers_dir: Path) -> Path:
     """
     Resolve a paper query to a file path.
 
+    Supports both the new per-paper subdirectory structure and the old flat layout:
+      New: papers/{id}_{title}/paper.tex  (or paper.pdf)
+      Old: papers/{id}_{title}.tex        (flat, backward-compat)
+
     Priority:
-    1. Direct file path (absolute or relative)
-    2. Exact filename in papers_dir
-    3. Partial match (prefer .tex over .pdf)
+    1. Direct file or directory path provided by caller
+    2. Exact filename match anywhere in the tree
+    3. Partial match against parent directory name (new structure) or filename (old)
+       — .tex preferred over .pdf when both exist
     """
-    # Direct path
+    # 1. Direct path
     direct = Path(query)
-    if direct.exists():
+    if direct.is_file():
         return direct
+    if direct.is_dir():
+        for name in ("paper.tex", "paper.pdf"):
+            candidate = direct / name
+            if candidate.exists():
+                return candidate
+        for candidate in list(direct.glob("*.tex")) + list(direct.glob("*.pdf")):
+            return candidate
+        raise FileNotFoundError(f"目录 {direct} 中没有找到 .tex 或 .pdf 文件")
 
-    candidates = list(papers_dir.glob("*.tex")) + list(papers_dir.glob("*.pdf"))
+    # Collect all .tex and .pdf files recursively, excluding figures/ directories
+    candidates = [
+        f for f in
+        list(papers_dir.glob("**/*.tex")) + list(papers_dir.glob("**/*.pdf"))
+        if "figures" not in f.parts
+    ]
 
-    # Exact filename
+    # 2. Exact filename match
     for f in candidates:
         if f.name == query:
             return f
 
-    # Partial match (case-insensitive)
+    # 3. Partial match against parent directory name (contains paper_id + title)
     q_lower = query.lower()
-    matches = [f for f in candidates if q_lower in f.name.lower()]
+    matches = [f for f in candidates if q_lower in f.parent.name.lower()]
+
     if not matches:
         raise FileNotFoundError(
             f"在 {papers_dir} 中找不到匹配 '{query}' 的论文文件\n"
-            "提示：可以用 Arxiv ID（如 2603.08706）、文件名关键词或完整路径"
+            "提示：可以用 Arxiv ID（如 2603.08706）、标题关键词或完整路径"
         )
 
-    # Prefer LaTeX source for better text quality
+    # Prefer LaTeX source for richer text content
     tex = [f for f in matches if f.suffix == ".tex"]
     return tex[0] if tex else matches[0]
 

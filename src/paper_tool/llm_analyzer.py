@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
+from typing import TYPE_CHECKING
 
 from paper_tool.config import get_config
-from paper_tool.models import PaperMetadata, PaperNote
+from paper_tool.models import FigureInfo, PaperMetadata, PaperNote
+
+if TYPE_CHECKING:
+    pass
 
 
 _SYSTEM_PROMPT = """你是一位专业的学术论文分析助手，擅长深度理解和总结计算机科学、人工智能领域的研究论文。
@@ -78,6 +83,91 @@ def _parse_response(raw: str) -> PaperNote:
     )
 
 
+def _llm_call(system: str, user: str) -> str:
+    """Single LLM call, returns raw response text. Raises on empty response."""
+    import litellm
+
+    cfg = get_config()
+    kwargs: dict = {
+        "model": cfg.llm_model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "max_tokens": 2048,
+        "temperature": cfg.llm_temperature,
+    }
+    if cfg.openai_base_url:
+        kwargs["api_base"] = cfg.openai_base_url
+    response = litellm.completion(**kwargs)
+    choice = response.choices[0]
+
+    raw = choice.message.content or ""
+    if not raw.strip():
+        raw = getattr(choice.message, "reasoning_content", None) or ""
+
+    raw = raw.strip()
+    if not raw:
+        raise ValueError("LLM 返回了空响应（content 和 reasoning_content 均为空）")
+    return raw
+
+
+def _strip_json_fence(raw: str) -> str:
+    """Remove optional ```json ... ``` fences from an LLM response."""
+    cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.MULTILINE)
+    cleaned = re.sub(r"\s*```\s*$", "", cleaned, flags=re.MULTILINE)
+    return cleaned.strip()
+
+
+def translate_captions(figures: list[FigureInfo]) -> list[FigureInfo]:
+    """
+    Translate figure captions to Chinese using a single LLM call.
+
+    Returns a new list of FigureInfo with translated captions.
+    Figures with empty captions are returned unchanged.
+    Raises on LLM or parsing failure (caller is responsible for handling).
+    """
+    to_translate = [(i, fig) for i, fig in enumerate(figures) if fig.caption.strip()]
+    if not to_translate:
+        return figures
+
+    system = (
+        "你是一位学术论文翻译专家。将给定的图片说明（figure caption）翻译成中文。\n"
+        "要求：\n"
+        "1. 保留数学公式、变量名、模型名称原样不变\n"
+        "2. 专业术语可保留英文并附中文注释，如 attention（注意力）\n"
+        "3. 翻译要准确、流畅、符合学术规范\n"
+        "4. 以 JSON 数组返回，元素顺序与输入完全一致，只输出 JSON 不要有其他内容"
+    )
+    captions_input = json.dumps(
+        [fig.caption for _, fig in to_translate], ensure_ascii=False
+    )
+    user = f"请翻译以下图片说明：\n{captions_input}"
+
+    raw = _llm_call(system, user)
+    translated: list[str] = json.loads(_strip_json_fence(raw))
+    if not isinstance(translated, list) or len(translated) != len(to_translate):
+        raise ValueError(
+            f"LLM 返回了 {len(translated)} 条翻译，期望 {len(to_translate)} 条"
+        )
+
+    result = list(figures)
+    for (orig_idx, fig), new_caption in zip(to_translate, translated):
+        if isinstance(new_caption, str) and new_caption.strip():
+            result[orig_idx] = replace(fig, caption=new_caption.strip())
+    return result
+
+
+_FIGURE_PLACEMENT_INSTRUCTION = """
+
+## 图片插入规则
+
+本论文包含以下图片，请在笔记中与该图片内容最相关的章节末尾，单独一行插入标记 `[FIGURE:N]`（N 为图片编号）。
+每张图片只使用一次，标记必须独占一行，不要加任何其他内容。
+
+{figures_list}"""
+
+
 class LLMAnalyzer:
     """Generates structured reading notes from paper content."""
 
@@ -95,12 +185,16 @@ class LLMAnalyzer:
         metadata: PaperMetadata,
         paper_text: str,
         debug: bool = False,
+        figures: list[FigureInfo] | None = None,
     ) -> PaperNote:
         """
         Generate reading notes. Does NOT perform classification.
 
         note_format="json"     → parse JSON response into structured PaperNote
         note_format="freeform" → store raw model output in PaperNote.raw_content
+
+        When `figures` is provided (freeform mode only), the system prompt is
+        augmented with instructions to place [FIGURE:N] markers in the output.
         """
         import traceback
         import litellm
@@ -117,6 +211,16 @@ class LLMAnalyzer:
         reserved = 2000
         truncated = self._truncate(paper_text, self._cfg.llm_max_input_tokens - reserved)
         system_prompt = self._cfg.analyzer_prompt or _SYSTEM_PROMPT
+
+        if figures and self._cfg.llm_note_format == "freeform":
+            figures_list = "\n".join(
+                f"- 图片 {fig.number}：{fig.caption or '（无说明）'}"
+                for fig in figures
+            )
+            system_prompt += _FIGURE_PLACEMENT_INSTRUCTION.format(
+                figures_list=figures_list,
+            )
+
         user_prompt = _build_user_prompt(metadata, truncated)
 
         _dbg("System Prompt", system_prompt)

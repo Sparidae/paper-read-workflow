@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 
@@ -66,3 +67,13 @@ class Classification:
     paper_type: list[str] = field(default_factory=list)      # 论文类型
     research_areas: list[str] = field(default_factory=list)  # 研究领域
     institutions: list[str] = field(default_factory=list)    # 来源机构
+
+
+@dataclass
+class FigureInfo:
+    """A single figure extracted from a paper's LaTeX source."""
+
+    image_path: "Path"   # absolute path to the PNG/JPG file on disk
+    caption: str         # cleaned caption text (LaTeX commands stripped)
+    label: str = ""      # LaTeX \label value (e.g. "fig:overview")
+    number: int = 0      # figure number in document order (1-based)
