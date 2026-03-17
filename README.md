@@ -1,9 +1,14 @@
 # paper-tool
 
 通过 Arxiv / OpenReview 链接，自动完成：
-1. 下载论文 PDF 到本地
+
+1. 下载论文 PDF（Arxiv 同时下载 LaTeX 源码）到本地
 2. 在 Notion 数据库中创建论文条目（标题、作者、摘要等）
-3. 调用大模型深度分析论文，生成结构化中文笔记写入 Notion
+3. LLM 自动分类（论文类型、研究领域、来源机构）
+4. LLM 生成一句话摘要，写入 Notion Abstract 字段
+5. 提取论文图片并翻译图注（仅 Arxiv，需 LaTeX 源码）
+6. 调用大模型深度分析全文，生成结构化中文笔记写入 Notion
+7. 支持基于论文全文的多轮问答（`chat` 命令）
 
 ## 环境要求
 
@@ -45,32 +50,43 @@ uv run paper-tool config init
 |--------|------|----------|
 | `NOTION_TOKEN` | Notion Integration Token | [notion.so/my-integrations](https://www.notion.so/my-integrations) |
 | `NOTION_DATABASE_ID` | Notion 数据库 ID | 从数据库页面 URL 中提取 |
-| `OPENAI_API_KEY` | OpenAI API Key | 使用 GPT-4o 时需要 |
+| `OPENAI_API_KEY` | OpenAI API Key | 使用 GPT-4o 等 OpenAI 模型时需要 |
+| `OPENAI_BASE_URL` | OpenAI 兼容端点（可选） | DeepSeek / Kimi / 本地 vLLM 等 |
 | `ANTHROPIC_API_KEY` | Anthropic API Key | 使用 Claude 时需要 |
 | `GEMINI_API_KEY` | Google Gemini API Key | 使用 Gemini 时需要 |
+| `OPENREVIEW_USERNAME` | OpenReview 账号（可选） | 需要登录才能下载的论文 |
+| `OPENREVIEW_PASSWORD` | OpenReview 密码（可选） | 同上 |
 
 ### 4. 配置 Notion 数据库
 
 在你的 Notion 数据库中，确保以下属性存在（名称可在 `config.yaml` 中修改）：
 
-| 属性名 | 类型 |
-|--------|------|
-| Title | title |
-| Authors | rich_text |
-| Abstract | rich_text |
-| Source | select |
-| URL | url |
-| Published Date | date |
-| Added Date | date |
-| Tags | multi_select |
-| Status | select |
+| 属性名（默认值） | 类型 | 说明 |
+|--------|------|------|
+| `Title` | title | 论文标题 |
+| `Authors` | rich_text | 作者列表 |
+| `Abstract` | rich_text | LLM 一句话摘要（自动覆盖原摘要） |
+| `Source` | select | 来源平台（Arxiv / OpenReview） |
+| `URL` | url | 论文链接 |
+| `Published Date` | date | 发表日期 |
+| `Added Date` | date | 添加日期 |
+| `Tags` | multi_select | 研究领域标签（LLM 自动分类） |
+| `Paper Type` | multi_select | 论文类型（Method / Benchmark 等，LLM 自动分类） |
+| `Institution` | multi_select | 来源机构（LLM 自动分类） |
+| `Status` | select 或 checkbox | 阅读状态（新添加默认为 Unread） |
+
+> `Paper Type` 和 `Institution` 为可选字段；如果数据库中不存在，分类结果会静默跳过。
 
 然后在数据库页面右上角点击「...」→「连接」→ 找到你的 Integration 并授权。
 
 ### 5. 验证配置
 
 ```bash
+# 查看当前配置（API key 脱敏显示）
 uv run paper-tool config show
+
+# 检查 Notion 数据库属性是否与 config.yaml 匹配
+uv run paper-tool config check-db
 ```
 
 ## 使用方法
@@ -78,15 +94,32 @@ uv run paper-tool config show
 ### 在服务器上直接使用
 
 ```bash
-# 添加一篇论文
+# 添加一篇论文（完整流程：下载 + 分析 + 写入 Notion）
 uv run paper-tool add "https://arxiv.org/abs/2301.00001"
 
-# 只保存元数据，跳过 AI 分析
+# 只保存元数据，跳过 LLM 分析
 uv run paper-tool add --skip-llm "https://arxiv.org/abs/2301.00001"
 
 # 批量添加（urls.txt 每行一个链接，# 开头为注释）
 uv run paper-tool batch urls.txt
+
+# 调试模式：打印 LLM 原始 prompt 和返回内容
+uv run paper-tool add --debug "https://arxiv.org/abs/2301.00001"
 ```
+
+### 与论文多轮问答
+
+```bash
+# 通过 Arxiv ID、关键词或文件路径指定论文
+uv run paper-tool chat 2301.00001
+uv run paper-tool chat "Attention Is All You Need"
+uv run paper-tool chat papers/2301.00001_Attention/paper.tex
+```
+
+进入交互式会话后：
+- 直接输入问题即可提问
+- `/reset` — 清空对话历史（保留论文上下文）
+- `/exit` — 退出
 
 ### 从本地电脑远程调用（SSH）
 
@@ -126,29 +159,63 @@ add-paper "https://arxiv.org/abs/2301.00001"
 
 ```yaml
 llm:
-  model: "openai/gpt-4o"           # OpenAI GPT-4o
-  # model: "anthropic/claude-3-5-sonnet-20241022"  # Claude
-  # model: "gemini/gemini-2.0-flash"               # Gemini（支持超长文档）
-  # model: "ollama/qwen2.5:72b"                    # 本地 Ollama
+  model: "openai/gpt-4o"                              # OpenAI GPT-4o（官方）
+  # model: "openai/deepseek-chat"                     # DeepSeek（配合 OPENAI_BASE_URL）
+  # model: "openai/moonshot-v1-8k"                    # Kimi（配合 OPENAI_BASE_URL）
+  # model: "openai/qwen-max"                          # 通义千问（配合 OPENAI_BASE_URL）
+  # model: "anthropic/claude-3-5-sonnet-20241022"     # Claude
+  # model: "gemini/gemini-2.0-flash"                  # Gemini（支持超长文档）
+  # model: "ollama/qwen2.5:72b"                       # 本地 Ollama
 ```
+
+使用 OpenAI 兼容端点时，在 `.env` 中同时设置：
+
+```bash
+OPENAI_BASE_URL=https://api.deepseek.com/v1   # 以 DeepSeek 为例
+```
+
+## 自定义提示词
+
+`prompts/` 目录下可覆盖内置的 LLM 提示词（`config.yaml` 中已默认配置）：
+
+| 文件 | 用途 |
+|------|------|
+| `prompts/analyzer.md` | 全文笔记生成提示词 |
+| `prompts/classifier.md` | 分类（类型 / 领域 / 机构）提示词 |
+| `prompts/summarizer.md` | 一句话摘要提示词 |
+
+修改后直接生效，无需重启。
 
 ## 项目结构
 
 ```
 paper_list/
-  pyproject.toml         # 项目配置与依赖
-  config.yaml            # 行为配置（模型、路径、Notion 属性映射）
-  .env                   # API Keys（不提交到 git）
-  .env.example           # Keys 模板
-  papers/                # 下载的 PDF 文件
+  pyproject.toml              # 项目配置与依赖
+  config.yaml                 # 行为配置（模型、路径、Notion 属性映射）
+  .env                        # API Keys（不提交到 git）
+  .env.example                # Keys 模板
+  papers/                     # 下载的 PDF / LaTeX 文件（按论文子目录存放）
+  prompts/
+    analyzer.md               # 笔记生成提示词（可自定义）
+    classifier.md             # 分类提示词（可自定义）
+    summarizer.md             # 一句话摘要提示词（可自定义）
   scripts/
-    add_paper.sh         # 本地 SSH 调用脚本
+    add_paper.sh              # 本地 SSH 调用脚本
+    create_test_db.py         # 创建测试用 Notion 数据库
+    migrate_papers.py         # 旧版 flat 目录结构迁移工具
   src/paper_tool/
-    cli.py               # CLI 命令入口
-    config.py            # 配置加载
-    models.py            # 数据结构定义
-    downloaders/         # Arxiv / OpenReview 下载器
-    pdf_parser.py        # PDF 文本提取
-    llm_analyzer.py      # LLM 分析与笔记生成
-    notion_service.py    # Notion API 交互
+    cli.py                    # CLI 命令入口（add / batch / chat / config）
+    config.py                 # 配置加载（config.yaml + .env）
+    models.py                 # 数据结构定义（PaperMetadata / PaperNote 等）
+    retry.py                  # API 调用自动重试装饰器
+    downloaders/
+      arxiv.py                # Arxiv 下载器（含 LaTeX 源码下载）
+      openreview.py           # OpenReview 下载器
+    pdf_parser.py             # PDF / LaTeX 文本提取
+    figure_extractor.py       # LaTeX 图片提取与 PDF 转 PNG（仅 Arxiv）
+    llm_analyzer.py           # LLM 全文笔记生成
+    llm_classifier.py         # LLM 论文分类（类型 / 领域 / 机构）
+    llm_summarizer.py         # LLM 一句话摘要生成
+    llm_chat.py               # LLM 多轮问答会话
+    notion_service.py         # Notion API 交互（建页 / 写笔记 / 上传图片）
 ```
