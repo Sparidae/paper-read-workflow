@@ -169,6 +169,15 @@ _FIGURE_PLACEMENT_INSTRUCTION = """
 
 {figures_list}"""
 
+_TABLE_PLACEMENT_INSTRUCTION = """
+
+## 表格插入规则
+
+本论文包含以下表格，请在笔记中与该表格内容最相关的章节末尾，单独一行插入标记 `[TABLE:N]`（N 为表格编号）。
+每张表格只使用一次，标记必须独占一行，不要加任何其他内容。
+
+{tables_list}"""
+
 
 class LLMAnalyzer:
     """Generates structured reading notes from paper content."""
@@ -188,6 +197,7 @@ class LLMAnalyzer:
         paper_text: str,
         debug: bool = False,
         figures: list[FigureInfo] | None = None,
+        tables: list[FigureInfo] | None = None,
     ) -> PaperNote:
         """
         Generate reading notes. Does NOT perform classification.
@@ -214,14 +224,23 @@ class LLMAnalyzer:
         truncated = self._truncate(paper_text, self._cfg.llm_max_input_tokens - reserved)
         system_prompt = self._cfg.analyzer_prompt or _SYSTEM_PROMPT
 
-        if figures and self._cfg.llm_note_format == "freeform":
-            figures_list = "\n".join(
-                f"- 图片 {fig.number}：{fig.caption or '（无说明）'}"
-                for fig in figures
-            )
-            system_prompt += _FIGURE_PLACEMENT_INSTRUCTION.format(
-                figures_list=figures_list,
-            )
+        if self._cfg.llm_note_format == "freeform":
+            if figures:
+                figures_list = "\n".join(
+                    f"- 图片 {fig.number}：{fig.caption or '（无说明）'}"
+                    for fig in figures
+                )
+                system_prompt += _FIGURE_PLACEMENT_INSTRUCTION.format(
+                    figures_list=figures_list,
+                )
+            if tables:
+                tables_list = "\n".join(
+                    f"- 表格 {tbl.number}：{tbl.caption or '（无说明）'}"
+                    for tbl in tables
+                )
+                system_prompt += _TABLE_PLACEMENT_INSTRUCTION.format(
+                    tables_list=tables_list,
+                )
 
         user_prompt = _build_user_prompt(metadata, truncated)
 

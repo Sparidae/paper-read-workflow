@@ -6,6 +6,7 @@ import re
 import tarfile
 import time
 from pathlib import Path
+from pathlib import PurePosixPath
 
 import httpx
 
@@ -49,6 +50,14 @@ def _paper_dir(metadata: "PaperMetadata", dest_dir: Path) -> Path:
     paper_dir = dest_dir / f"{metadata.paper_id}_{safe_title}"
     paper_dir.mkdir(parents=True, exist_ok=True)
     return paper_dir
+
+
+def _safe_member_relpath(name: str) -> Path | None:
+    """Return a safe relative path for a tar member, or None if unusable."""
+    parts = [part for part in PurePosixPath(name).parts if part not in ("", ".", "..")]
+    if not parts:
+        return None
+    return Path(*parts)
 
 
 class ArxivDownloader(BaseDownloader):
@@ -128,8 +137,9 @@ class ArxivDownloader(BaseDownloader):
         paper_dir = _paper_dir(metadata, dest_dir)
         merged_path = paper_dir / "paper.tex"
         figures_dir = paper_dir / "figures"
+        source_dir = paper_dir / "source"
 
-        if merged_path.exists() and figures_dir.exists():
+        if merged_path.exists() and figures_dir.exists() and source_dir.exists():
             return merged_path
 
         src_url = f"https://arxiv.org/src/{metadata.paper_id}"
@@ -160,31 +170,48 @@ class ArxivDownloader(BaseDownloader):
                     with tarfile.open(tar_path) as tar:
                         tex_contents: list[str] = []
                         figures_dir.mkdir(parents=True, exist_ok=True)
+                        source_dir.mkdir(parents=True, exist_ok=True)
 
                         for member in tar.getmembers():
+                            rel_path = _safe_member_relpath(member.name)
+                            if rel_path is None or not member.isfile():
+                                continue
+
                             suffix = Path(member.name).suffix.lower()
+                            f = tar.extractfile(member)
+                            if not f:
+                                continue
+
+                            # Keep a full copy of the original source tree for robust
+                            # LaTeX-based figure/table rendering.
+                            source_out = source_dir / rel_path
+                            source_out.parent.mkdir(parents=True, exist_ok=True)
+                            try:
+                                content = f.read()
+                            except Exception:
+                                continue
+                            try:
+                                source_out.write_bytes(content)
+                            except Exception:
+                                pass
 
                             if member.name.endswith(".tex"):
-                                f = tar.extractfile(member)
-                                if f:
-                                    try:
-                                        tex_contents.append(
-                                            f.read().decode("utf-8", errors="replace")
-                                        )
-                                    except Exception:
-                                        pass
+                                try:
+                                    tex_contents.append(
+                                        content.decode("utf-8", errors="replace")
+                                    )
+                                except Exception:
+                                    pass
 
                             elif suffix in _IMG_SUFFIXES and member.size <= _MAX_IMG_BYTES:
                                 # Flatten: save only the filename, drop subdirectory path
                                 fname = Path(member.name).name
                                 out_path = figures_dir / fname
                                 if not out_path.exists():
-                                    f = tar.extractfile(member)
-                                    if f:
-                                        try:
-                                            out_path.write_bytes(f.read())
-                                        except Exception:
-                                            pass
+                                    try:
+                                        out_path.write_bytes(content)
+                                    except Exception:
+                                        pass
 
                         if not tex_contents:
                             return None

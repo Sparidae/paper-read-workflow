@@ -15,6 +15,26 @@
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 
+### 可选：LaTeX（用于表格精确渲染）
+
+表格默认使用 matplotlib 渲染。若要切换为方案 B（直接编译 LaTeX 源码，公式/合并单元格效果与原论文一致），需在系统中安装 LaTeX：
+
+**Ubuntu / Debian：**
+
+```bash
+sudo apt install \
+  texlive-latex-base \
+  texlive-latex-recommended \
+  texlive-latex-extra \
+  texlive-fonts-recommended \
+  texlive-science
+```
+
+> 约 700 MB，覆盖 ML 论文常用宏包（`booktabs`、`amsmath`、`multirow`、`array`、`xcolor` 等）。  
+> 已安装 `texlive-full` 的环境无需再单独安装。
+>
+> 安装 LaTeX 后，表格渲染会优先走 `pdflatex`。若某张表编译失败，会自动回退到 matplotlib，并把调试文件写到对应论文目录下的 `tables/debug/`。
+
 ## 服务器部署
 
 ### 1. 克隆项目
@@ -186,6 +206,22 @@ OPENAI_BASE_URL=https://api.deepseek.com/v1   # 以 DeepSeek 为例
 
 修改后直接生效，无需重启。
 
+### 表格渲染调试
+
+如果你在检查 LaTeX 图表渲染是否生效，建议在 `config.yaml` 中开启：
+
+```yaml
+llm:
+  rerender_figures: true
+  rerender_tables: true
+```
+
+这样每次都会忽略已有的渲染缓存，重新渲染。调试文件会写到对应论文目录下的 `figures/debug/` 或 `tables/debug/`：
+
+- `*.status.txt`：记录本次使用的是 `latex`、`file`、`matplotlib` 还是失败
+- `*.latex.tex` / `*.latex.log`：LaTeX 失败时的编译输入和日志
+- `*.fallback.txt`：标记该图/表已从 LaTeX 回退到 fallback 渲染
+
 ## 项目结构
 
 ```
@@ -213,6 +249,7 @@ paper_list/
       openreview.py           # OpenReview 下载器
     pdf_parser.py             # PDF / LaTeX 文本提取
     figure_extractor.py       # LaTeX 图片提取与 PDF 转 PNG（仅 Arxiv）
+    table_extractor.py        # LaTeX 表格提取与渲染为 PNG（仅 Arxiv）
     llm_analyzer.py           # LLM 全文笔记生成
     llm_classifier.py         # LLM 论文分类（类型 / 领域 / 机构）
     llm_summarizer.py         # LLM 一句话摘要生成

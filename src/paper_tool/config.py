@@ -180,6 +180,26 @@ class Config:
         return self._yaml.get("llm", {}).get("translator_max_tokens", 8000)
 
     @property
+    def max_figures(self) -> int:
+        """Maximum number of figures to extract and upload per paper."""
+        return self._yaml.get("llm", {}).get("max_figures", 15)
+
+    @property
+    def rerender_figures(self) -> bool:
+        """Whether to ignore cached rendered figure PNGs and rerender them."""
+        return bool(self._yaml.get("llm", {}).get("rerender_figures", False))
+
+    @property
+    def max_tables(self) -> int:
+        """Maximum number of tables to extract and upload per paper."""
+        return self._yaml.get("llm", {}).get("max_tables", 10)
+
+    @property
+    def rerender_tables(self) -> bool:
+        """Whether to ignore cached table PNGs and rerender them."""
+        return bool(self._yaml.get("llm", {}).get("rerender_tables", False))
+
+    @property
     def llm_temperature(self) -> float:
         return self._yaml.get("llm", {}).get("temperature", 0.2)
 

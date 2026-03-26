@@ -24,6 +24,14 @@ llm:
   summarizer_max_tokens: 8000
   # 图片说明翻译专用 token 上限
   translator_max_tokens: 8000
+  # 每篇论文最多提取并上传的图片数量
+  max_figures: 15
+  # 是否忽略已有渲染图片并强制重新渲染
+  rerender_figures: false
+  # 每篇论文最多提取并上传的表格数量
+  max_tables: 10
+  # 是否忽略已有表格 PNG 并强制重新渲染
+  rerender_tables: false
   # 温度（0.0 = 确定性输出，适合摘要任务）
   temperature: 0.2
   # 笔记输出格式：

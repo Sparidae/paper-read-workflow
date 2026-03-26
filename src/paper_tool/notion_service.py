@@ -141,6 +141,43 @@ def _rich_text_md(content: str) -> list[dict]:
     return _parse_inline(content)
 
 
+def _sanitize_caption_rich_text(rich: list[dict]) -> list[dict]:
+    """
+    Sanitize caption rich_text to avoid Notion validation failures.
+
+    Notion rejects empty inline equations and empty text fragments in image
+    captions. We drop such items only for captions, keeping body parsing intact.
+    """
+    cleaned: list[dict] = []
+    for item in rich:
+        if not isinstance(item, dict):
+            continue
+
+        item_type = item.get("type")
+        if item_type == "equation":
+            equation = item.get("equation", {})
+            expr = equation.get("expression", "") if isinstance(equation, dict) else ""
+            if isinstance(expr, str) and expr.strip():
+                cleaned.append(item)
+            continue
+
+        if item_type == "text":
+            text = item.get("text", {})
+            content = text.get("content", "") if isinstance(text, dict) else ""
+            if isinstance(content, str) and content.strip():
+                cleaned.append(item)
+            continue
+
+        cleaned.append(item)
+
+    return cleaned
+
+
+def _caption_rich_text_md(content: str) -> list[dict]:
+    """Caption-only rich_text with validation-safe inline cleanup."""
+    return _sanitize_caption_rich_text(_parse_inline(content))
+
+
 def _paragraph_block(text: str) -> dict:
     return {
         "object": "block",
@@ -199,6 +236,7 @@ def _text_to_blocks(text: str) -> list[dict]:
 
 
 _FIGURE_MARKER = re.compile(r"^\[FIGURE[:\s]*(\d+)\]$", re.IGNORECASE)
+_TABLE_MARKER = re.compile(r"^\[TABLE[:\s]*(\d+)\]$", re.IGNORECASE)
 
 
 def _freeform_to_blocks(text: str) -> list[dict]:
@@ -265,6 +303,12 @@ def _freeform_to_blocks(text: str) -> list[dict]:
         fig_m = _FIGURE_MARKER.match(stripped)
         if fig_m:
             blocks.append({"_figure_placeholder": int(fig_m.group(1))})
+            i += 1
+            continue
+
+        tbl_m = _TABLE_MARKER.match(stripped)
+        if tbl_m:
+            blocks.append({"_table_placeholder": int(tbl_m.group(1))})
             i += 1
             continue
 
@@ -568,8 +612,9 @@ class NotionService:
         return None
 
     def _figure_blocks(self, fig: FigureInfo, upload_id: str) -> list[dict]:
-        """Build the Notion blocks for a single figure (heading + image with caption)."""
-        label = f"Figure {fig.number}"
+        """Build the Notion blocks for a single figure or table (heading + image with caption)."""
+        prefix = "Table" if fig.kind == "table" else "Figure"
+        label = f"{prefix} {fig.number}"
         if fig.label:
             label += f"  ({fig.label})"
         return [
@@ -580,7 +625,7 @@ class NotionService:
                 "image": {
                     "type": "file_upload",
                     "file_upload": {"id": upload_id},
-                    "caption": _rich_text_md(fig.caption) if fig.caption else [],
+                    "caption": _caption_rich_text_md(fig.caption) if fig.caption else [],
                 },
             },
         ]
@@ -590,52 +635,81 @@ class NotionService:
         page_id: str,
         note: PaperNote,
         figures: list[FigureInfo],
+        tables: list[FigureInfo] | None = None,
     ) -> int:
         """
-        Append note blocks to the page, with figures injected at [FIGURE:N] markers.
+        Append note blocks to the page, with figures/tables injected at
+        [FIGURE:N] / [TABLE:N] markers placed by the LLM.
 
-        The note's raw_content should contain [FIGURE:N] markers placed by the LLM.
-        _freeform_to_blocks converts these into placeholder dicts.
-        This method replaces each placeholder with actual uploaded image blocks.
-        Figures not referenced by any marker are appended at the end.
+        Items not referenced by any marker are appended at the end under
+        "论文核心图表" / "论文核心表格" sections.
 
-        Returns the number of successfully uploaded figures.
+        Returns the total number of successfully uploaded items.
         """
+        tables = tables or []
+
         if note.is_freeform:
             content_blocks = _freeform_to_blocks(note.raw_content or "")
         else:
             content_blocks = _note_to_blocks(note)
 
+        # Upload all figures
         fig_map: dict[int, FigureInfo] = {fig.number: fig for fig in figures}
-        uploads: dict[int, str] = {}
+        fig_uploads: dict[int, str] = {}
         for fig in figures:
             uid = self._upload_file(fig.image_path)
             if uid is not None:
-                uploads[fig.number] = uid
+                fig_uploads[fig.number] = uid
             self._rate_limit()
 
-        placed: set[int] = set()
+        # Upload all tables
+        tbl_map: dict[int, FigureInfo] = {tbl.number: tbl for tbl in tables}
+        tbl_uploads: dict[int, str] = {}
+        for tbl in tables:
+            uid = self._upload_file(tbl.image_path)
+            if uid is not None:
+                tbl_uploads[tbl.number] = uid
+            self._rate_limit()
+
+        placed_figs: set[int] = set()
+        placed_tbls: set[int] = set()
         final_blocks: list[dict] = [_divider_block(), _heading2_block("AI 分析笔记")]
 
         for block in content_blocks:
             fig_num = block.get("_figure_placeholder")
+            tbl_num = block.get("_table_placeholder")
             if fig_num is not None:
-                if fig_num in uploads:
+                if fig_num in fig_uploads:
                     final_blocks.extend(
-                        self._figure_blocks(fig_map[fig_num], uploads[fig_num])
+                        self._figure_blocks(fig_map[fig_num], fig_uploads[fig_num])
                     )
-                    placed.add(fig_num)
+                    placed_figs.add(fig_num)
+            elif tbl_num is not None:
+                if tbl_num in tbl_uploads:
+                    final_blocks.extend(
+                        self._figure_blocks(tbl_map[tbl_num], tbl_uploads[tbl_num])
+                    )
+                    placed_tbls.add(tbl_num)
             else:
                 final_blocks.append(block)
 
-        unplaced = [
+        unplaced_figs = [
             fig for fig in figures
-            if fig.number not in placed and fig.number in uploads
+            if fig.number not in placed_figs and fig.number in fig_uploads
         ]
-        if unplaced:
+        if unplaced_figs:
             final_blocks += [_divider_block(), _heading2_block("论文核心图表")]
-            for fig in unplaced:
-                final_blocks.extend(self._figure_blocks(fig, uploads[fig.number]))
+            for fig in unplaced_figs:
+                final_blocks.extend(self._figure_blocks(fig, fig_uploads[fig.number]))
+
+        unplaced_tbls = [
+            tbl for tbl in tables
+            if tbl.number not in placed_tbls and tbl.number in tbl_uploads
+        ]
+        if unplaced_tbls:
+            final_blocks += [_divider_block(), _heading2_block("论文核心表格")]
+            for tbl in unplaced_tbls:
+                final_blocks.extend(self._figure_blocks(tbl, tbl_uploads[tbl.number]))
 
         batch_size = 100
         for i in range(0, len(final_blocks), batch_size):
@@ -645,7 +719,7 @@ class NotionService:
                 children=final_blocks[i : i + batch_size],
             )
 
-        return len(uploads)
+        return len(fig_uploads) + len(tbl_uploads)
 
     def append_figures(self, page_id: str, figures: list[FigureInfo]) -> int:
         """
@@ -683,7 +757,7 @@ class NotionService:
                 "image": {
                     "type": "file_upload",
                     "file_upload": {"id": file_upload_id},
-                    "caption": _rich_text_md(fig.caption) if fig.caption else [],
+                    "caption": _caption_rich_text_md(fig.caption) if fig.caption else [],
                 },
             })
 

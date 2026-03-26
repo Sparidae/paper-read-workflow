@@ -71,9 +71,11 @@ class Classification:
 
 @dataclass
 class FigureInfo:
-    """A single figure extracted from a paper's LaTeX source."""
+    """A single figure or table extracted from a paper's LaTeX source."""
 
     image_path: "Path"   # absolute path to the PNG/JPG file on disk
     caption: str         # cleaned caption text (LaTeX commands stripped)
     label: str = ""      # LaTeX \label value (e.g. "fig:overview")
-    number: int = 0      # figure number in document order (1-based)
+    number: int = 0      # figure/table number in document order (1-based)
+    kind: str = "figure" # "figure" or "table"
+    render_backend: str = ""  # tables: "latex" / "matplotlib" / "cached"

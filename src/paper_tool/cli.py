@@ -173,8 +173,10 @@ def _process_paper(url: str, skip_llm: bool = False, debug: bool = False) -> boo
 
         # ── Step 6b-pre: Extract and translate figures (before note gen) ───
         figures = []
+        tables = []
         if isinstance(downloader, ArxivDownloader) and tex_path is not None:
             from paper_tool.figure_extractor import convert_pdf_figures, parse_figures
+            from paper_tool.table_extractor import parse_tables
 
             task_fig = progress.add_task("[cyan]提取论文图片...", total=None)
             try:
@@ -184,14 +186,50 @@ def _process_paper(url: str, skip_llm: bool = False, debug: bool = False) -> boo
                     progress.console.print(
                         f"  [dim]已将 {n_converted} 个 PDF 图片转换为 PNG[/dim]"
                     )
-                figures = parse_figures(tex_path, figures_dir)
+                figures = parse_figures(
+                    tex_path,
+                    figures_dir,
+                    max_figures=cfg.max_figures,
+                    force_rerender=cfg.rerender_figures,
+                )
                 if figures:
-                    _done(task_fig, f"[green]✓ 找到 {len(figures)} 张图片")
+                    backend_counts: dict[str, int] = {}
+                    for fig in figures:
+                        backend = fig.render_backend or "unknown"
+                        backend_counts[backend] = backend_counts.get(backend, 0) + 1
+                    backend_summary = ", ".join(
+                        f"{name}={count}" for name, count in sorted(backend_counts.items())
+                    )
+                    _done(task_fig, f"[green]✓ 找到 {len(figures)} 张图片  [{backend_summary}]")
                 else:
                     _done(task_fig, "[yellow]⚠ 未找到可用图片")
             except Exception as e:
                 _done(task_fig, f"[yellow]⚠ 图片提取失败（已跳过）: {e}")
                 figures = []
+
+            task_tbl = progress.add_task("[cyan]提取并渲染论文表格...", total=None)
+            try:
+                tables_dir = downloader.get_figures_dir(metadata, cfg.papers_dir).parent / "tables"
+                tables = parse_tables(
+                    tex_path,
+                    tables_dir,
+                    max_tables=cfg.max_tables,
+                    force_rerender=cfg.rerender_tables,
+                )
+                if tables:
+                    backend_counts: dict[str, int] = {}
+                    for table in tables:
+                        backend = table.render_backend or "unknown"
+                        backend_counts[backend] = backend_counts.get(backend, 0) + 1
+                    backend_summary = ", ".join(
+                        f"{name}={count}" for name, count in sorted(backend_counts.items())
+                    )
+                    _done(task_tbl, f"[green]✓ 找到 {len(tables)} 张表格  [{backend_summary}]")
+                else:
+                    _done(task_tbl, "[yellow]⚠ 未找到可用表格")
+            except Exception as e:
+                _done(task_tbl, f"[yellow]⚠ 表格提取失败（已跳过）: {e}")
+                tables = []
 
         if not skip_llm and figures:
             from paper_tool.llm_analyzer import translate_captions
@@ -203,6 +241,16 @@ def _process_paper(url: str, skip_llm: bool = False, debug: bool = False) -> boo
             except Exception as e:
                 _done(task_trans, f"[yellow]⚠ 翻译失败（保留原文）: {e}")
 
+        if not skip_llm and tables:
+            from paper_tool.llm_analyzer import translate_captions
+
+            task_trans_tbl = progress.add_task("[cyan]翻译表格说明...", total=None)
+            try:
+                tables = translate_captions(tables)
+                _done(task_trans_tbl, "[green]✓ 表格说明翻译完成")
+            except Exception as e:
+                _done(task_trans_tbl, f"[yellow]⚠ 翻译失败（保留原文）: {e}")
+
         # ── Step 6b: LLM note generation (with figure info for placement) ─
         if not skip_llm:
             task6b = progress.add_task(
@@ -213,6 +261,7 @@ def _process_paper(url: str, skip_llm: bool = False, debug: bool = False) -> boo
                 note = analyzer.analyze(
                     metadata, pdf_text, debug=debug,
                     figures=figures if figures else None,
+                    tables=tables if tables else None,
                 )
                 _done(task6b, "[green]✓ 笔记生成完成")
             except Exception as e:
@@ -221,25 +270,32 @@ def _process_paper(url: str, skip_llm: bool = False, debug: bool = False) -> boo
         else:
             note = None
 
-        # ── Step 7: Write note + figures to Notion ────────────────────────
+        # ── Step 7: Write note + figures + tables to Notion ──────────────
+        has_visuals = bool(figures or tables)
         if note is not None:
-            task7 = progress.add_task("[cyan]将笔记和图片写入 Notion...", total=None)
+            task7 = progress.add_task("[cyan]将笔记和图表写入 Notion...", total=None)
             try:
-                if figures:
-                    n = notion.append_note_with_figures(page_id, note, figures)
-                    _done(task7, f"[green]✓ 笔记写入完成，上传 {n}/{len(figures)} 张图片")
+                if has_visuals:
+                    n = notion.append_note_with_figures(page_id, note, figures, tables)
+                    total_vis = len(figures) + len(tables)
+                    _done(task7, f"[green]✓ 笔记写入完成，上传 {n}/{total_vis} 张图表")
                 else:
                     notion.append_note(page_id, note)
                     _done(task7, "[green]✓ 笔记写入完成")
             except Exception as e:
                 _done(task7, f"[yellow]⚠ 笔记写入失败: {e}")
-        elif figures:
-            task7 = progress.add_task("[cyan]上传论文图片...", total=None)
+                progress.stop()
+                return False
+        elif has_visuals:
+            task7 = progress.add_task("[cyan]上传论文图表...", total=None)
             try:
-                n = notion.append_figures(page_id, figures)
-                _done(task7, f"[green]✓ 上传 {n}/{len(figures)} 张图片完成")
+                n = notion.append_figures(page_id, figures + tables)
+                total_vis = len(figures) + len(tables)
+                _done(task7, f"[green]✓ 上传 {n}/{total_vis} 张图表完成")
             except Exception as e:
-                _done(task7, f"[yellow]⚠ 图片上传失败（已跳过）: {e}")
+                _done(task7, f"[yellow]⚠ 图表上传失败: {e}")
+                progress.stop()
+                return False
 
         progress.stop()
 
