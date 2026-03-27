@@ -1,4 +1,4 @@
-"""Helpers for LLM streaming output with Rich-native incremental rendering."""
+"""Helpers for LLM streaming output in a fixed-height Rich panel."""
 
 from __future__ import annotations
 
@@ -16,72 +16,72 @@ class CompletionResult:
     usage: Any = None
 
 
-class StreamPrinter:
-    """Rich-native incremental printer for streamed token output."""
+class StreamWindow:
+    """A small fixed-height live panel for token streaming output."""
 
-    def __init__(
-        self,
-        title: str,
-        *,
-        height: int = 8,
-        max_buffer_chars: int = 8000,
-        refresh_interval: float = 0.12,
-    ) -> None:
+    def __init__(self, title: str, *, height: int = 8, max_buffer_chars: int = 8000) -> None:
         from rich.console import Console
+        from rich.live import Live
+        from rich.panel import Panel
+        from rich.text import Text
 
         self._Console = Console
+        self._Live = Live
+        self._Panel = Panel
+        self._Text = Text
 
         self._title = title
-        self._height = max(4, height)  # kept for backward-compatible signature
-        self._max_buffer_chars = max(2000, max_buffer_chars)  # idem
-        self._refresh_interval = max(0.05, refresh_interval)
-        self._console = None
-        self._pending = ""
+        self._height = max(4, height)
+        self._max_buffer_chars = max(2000, max_buffer_chars)
+        self._buffer = ""
+        self._live = None
         self._last_refresh = 0.0
-        self._last_char = ""
-        self._has_output = False
 
-    def __enter__(self) -> "StreamPrinter":
-        # Use stderr so it does not collide with the primary stdout progress bar.
-        self._console = self._Console(stderr=True)
-        self._console.rule(f"[bold cyan]{self._title}[/bold cyan]")
+    def __enter__(self) -> "StreamWindow":
+        # Use stderr so it does not collide with the primary stdout progress area.
+        console = self._Console(stderr=True)
+        self._live = self._Live(
+            self._renderable("等待模型输出..."),
+            console=console,
+            refresh_per_second=15,
+            transient=True,
+        )
+        self._live.__enter__()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        self.flush()
-        if self._console is not None and self._has_output and self._last_char != "\n":
-            self._console.print()
-        self._console = None
+        if self._live is not None:
+            self._live.__exit__(exc_type, exc, tb)
+            self._live = None
 
     def append(self, text: str) -> None:
         if not text:
             return
 
-        self._pending += text
-        self._has_output = True
-        self._last_char = text[-1]
+        self._buffer += text
+        if len(self._buffer) > self._max_buffer_chars:
+            self._buffer = self._buffer[-self._max_buffer_chars :]
 
-        # Flush in readable chunks instead of token-by-token repaint.
+        # Throttle live updates to reduce terminal flicker and CPU overhead.
         now = time.monotonic()
-        if not self._should_flush(text, now):
+        if (now - self._last_refresh) < 0.03:
             return
-        self.flush(now=now)
+        self._last_refresh = now
+        self.refresh()
 
-    def flush(self, *, now: float | None = None) -> None:
-        if not self._pending or self._console is None:
+    def refresh(self) -> None:
+        if self._live is None:
             return
-        self._console.print(self._pending, end="", markup=False, highlight=False, soft_wrap=True)
-        self._pending = ""
-        self._last_refresh = now if now is not None else time.monotonic()
+        shown = self._buffer[-self._max_buffer_chars :] if self._buffer else "等待模型输出..."
+        self._live.update(self._renderable(shown))
 
-    def _should_flush(self, text: str, now: float) -> bool:
-        if "\n" in text:
-            return True
-        if any(ch in text for ch in "。！？!?;；,.，"):
-            return True
-        if len(self._pending) >= 64:
-            return True
-        return (now - self._last_refresh) >= self._refresh_interval
+    def _renderable(self, content: str):
+        return self._Panel(
+            self._Text(content),
+            title=self._title,
+            height=self._height,
+            border_style="cyan",
+        )
 
 
 def _join_message_text(content: Any) -> str:
@@ -150,7 +150,7 @@ def completion_to_text(
     """
     Run litellm completion and normalize text extraction.
 
-    In stream mode, tokens are incrementally printed with Rich.
+    In stream mode, tokens are rendered in a fixed-height Rich live panel.
     """
     import litellm
 
@@ -170,7 +170,7 @@ def completion_to_text(
     parts: list[str] = []
     finish_reason: str | None = None
 
-    with StreamPrinter(stream_title, height=stream_height) as printer:
+    with StreamWindow(stream_title, height=stream_height) as window:
         for chunk in litellm.completion(**stream_kwargs):
             choices = getattr(chunk, "choices", None) or []
             if not choices:
@@ -180,11 +180,11 @@ def completion_to_text(
             piece = _extract_delta_text(delta)
             if piece:
                 parts.append(piece)
-                printer.append(piece)
+                window.append(piece)
             fr = getattr(choice, "finish_reason", None)
             if fr:
                 finish_reason = fr
-        printer.flush()
+        window.refresh()
 
     return CompletionResult(
         text="".join(parts).strip(),
