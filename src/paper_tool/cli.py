@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from rich.text import Text
 
 app = typer.Typer(
@@ -24,12 +24,125 @@ app.add_typer(config_app, name="config")
 console = Console()
 error_console = Console(stderr=True, style="bold red")
 
+def _now_ts() -> str:
+    """Current local time as HH:MM:SS for progress logs."""
+    return time.strftime("%H:%M:%S", time.localtime())
+
+
+def _fmt_elapsed(elapsed: float) -> str:
+    if elapsed < 60:
+        return f"{elapsed:.1f}s"
+    minutes, seconds = divmod(int(elapsed), 60)
+    return f"{minutes}m{seconds:02d}s"
+
+
+class _StepProgress:
+    """Per-step logger backed by a pipeline progress bar."""
+
+    def __init__(self, tracker: "_PipelineProgress", name: str) -> None:
+        self._tracker = tracker
+        self.name = name
+        self._start = 0.0
+
+    def __enter__(self) -> "_StepProgress":
+        self._start = time.monotonic()
+        self._tracker._start_step(self.name)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._tracker._finish_step()
+
+    def elapsed(self) -> float:
+        return max(0.0, time.monotonic() - self._start)
+
+    def done(self, detail: str = "") -> None:
+        suffix = f"：{detail}" if detail else ""
+        self._tracker._log(
+            f"[dim][{_now_ts()}][/dim] [green]完成[/green]：{self.name}{suffix} "
+            f"[dim]({_fmt_elapsed(self.elapsed())})[/dim]"
+        )
+
+    def warn(self, detail: str) -> None:
+        self._tracker._log(
+            f"[dim][{_now_ts()}][/dim] [yellow]警告[/yellow]：{self.name}：{detail} "
+            f"[dim]({_fmt_elapsed(self.elapsed())})[/dim]"
+        )
+
+    def fail(self, detail: str) -> None:
+        self._tracker._log(
+            f"[dim][{_now_ts()}][/dim] [ERROR] {self.name}失败：{detail} "
+            f"[dim]({_fmt_elapsed(self.elapsed())})[/dim]",
+            error=True,
+        )
+
+
+class _PipelineProgress:
+    """Track end-to-end pipeline progress for one paper."""
+
+    def __init__(self, enabled: bool) -> None:
+        self._enabled = enabled
+        self._progress: Progress | None = None
+        self._task_id: int | None = None
+        self._total_steps = 0
+        self._done_steps = 0
+
+    def __enter__(self) -> "_PipelineProgress":
+        if self._enabled:
+            self._progress = Progress(
+                SpinnerColumn(style="cyan"),
+                TextColumn("{task.description}", justify="left"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console,
+            )
+            self._progress.__enter__()
+            self._task_id = self._progress.add_task("[cyan]准备开始[/cyan]", total=0)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._progress is not None:
+            self._progress.__exit__(exc_type, exc, tb)
+
+    def step(self, name: str) -> _StepProgress:
+        return _StepProgress(self, name)
+
+    def _start_step(self, name: str) -> None:
+        self._total_steps += 1
+        if self._progress is not None and self._task_id is not None:
+            self._progress.update(
+                self._task_id,
+                total=self._total_steps,
+                completed=self._done_steps,
+                description=f"[cyan]{name}[/cyan]",
+            )
+            return
+        console.print(f"[dim][{_now_ts()}][/dim] [cyan]开始[/cyan]：{name}")
+
+    def _finish_step(self) -> None:
+        self._done_steps += 1
+        if self._progress is not None and self._task_id is not None:
+            self._progress.update(
+                self._task_id,
+                completed=self._done_steps,
+                description=f"[green]阶段进度 {self._done_steps}/{self._total_steps}[/green]",
+            )
+
+    def _log(self, message: str, *, error: bool = False) -> None:
+        if error:
+            error_console.print(message)
+            return
+        if self._progress is not None:
+            self._progress.console.print(message)
+            return
+        console.print(message)
+
 
 def _process_paper(
     url: str,
     skip_llm: bool = False,
     debug: bool = False,
     stream: bool = False,
+    force: bool = False,
 ) -> bool:
     """
     Core pipeline: download -> extract -> analyze -> write to Notion.
@@ -45,299 +158,277 @@ def _process_paper(
 
     cfg = get_config()
     url = url.strip()
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        TimeElapsedColumn(),
-        console=console,
-        transient=False,
-    ) as progress:
-
-        def _done(task_id: int, description: str) -> None:
-            """Mark a task as finished: freeze timer and stop spinner."""
-            progress.update(task_id, description=description, total=1, completed=1)
-
+    with _PipelineProgress(enabled=console.is_terminal) as pipeline:
         # ── Step 1: Fetch metadata ─────────────────────────────────────────
-        task = progress.add_task("[cyan]获取论文元数据...", total=None)
-        try:
-            downloader = get_downloader(url)
-            metadata = downloader.fetch_metadata(url)
-            _done(task, f"[green]✓ 元数据获取成功: {metadata.title[:60]}")
-        except Exception as e:
-            progress.stop()
-            error_console.print(f"\n[ERROR] 元数据获取失败: {e}")
-            return False
+        with pipeline.step("获取论文元数据") as step:
+            try:
+                downloader = get_downloader(url)
+                metadata = downloader.fetch_metadata(url)
+                step.done(f"{metadata.title[:60]}")
+            except Exception as e:
+                step.fail(str(e))
+                return False
 
-        # ── Step 2: Check for duplicates ──────────────────────────────────
-        task2 = progress.add_task("[cyan]检查 Notion 中是否已存在...", total=None)
-        try:
-            notion = NotionService()
-            existing_id = notion.find_existing_page(metadata.url)
-            if existing_id:
-                _done(task2, "[yellow]⚠ 论文已存在于 Notion，跳过")
-                progress.stop()
-                console.print(
-                    f"\n[yellow]论文已存在: {notion.get_page_url(existing_id)}[/yellow]"
-                )
-                return True
-            _done(task2, "[green]✓ 未重复，继续处理")
-        except Exception as e:
-            progress.stop()
-            error_console.print(f"\n[ERROR] Notion 连接失败: {e}")
-            return False
+        # ── Step 2: Check for duplicates ───────────────────────────────────
+        with pipeline.step("检查 Notion 中是否已存在") as step:
+            try:
+                notion = NotionService()
+                existing_ids = notion.find_existing_pages(metadata.url)
+                if existing_ids:
+                    if force:
+                        for existing_id in existing_ids:
+                            notion.archive_page(existing_id)
+                        step.warn(f"已归档 {len(existing_ids)} 条旧记录，继续重建")
+                    else:
+                        existing_id = existing_ids[0]
+                        step.warn("论文已存在于 Notion，跳过")
+                        console.print(f"[yellow]论文已存在: {notion.get_page_url(existing_id)}[/yellow]")
+                        console.print("[dim]如需覆盖重建，请添加 --force[/dim]")
+                        return True
+                else:
+                    step.done("未重复，继续处理")
+            except Exception as e:
+                step.fail(f"Notion 连接失败: {e}")
+                return False
 
-        # ── Step 3: Download PDF ──────────────────────────────────────────
-        task3 = progress.add_task("[cyan]下载 PDF...", total=None)
-        try:
-            pdf_path = downloader.download_pdf(metadata, cfg.papers_dir)
-            metadata.pdf_path = str(pdf_path)
-            _done(task3, f"[green]✓ PDF 已保存: {pdf_path.name}")
-        except Exception as e:
-            progress.stop()
-            error_console.print(f"\n[ERROR] PDF 下载失败: {e}")
-            return False
+        # ── Step 3: Download PDF ───────────────────────────────────────────
+        with pipeline.step("下载 PDF") as step:
+            try:
+                pdf_path = downloader.download_pdf(metadata, cfg.papers_dir)
+                metadata.pdf_path = str(pdf_path)
+                step.done(f"已保存: {pdf_path.name}")
+            except Exception as e:
+                step.fail(str(e))
+                return False
 
-        # ── Step 4: Extract text (LaTeX preferred, fallback to PDF) ──────
-        from paper_tool.models import PaperSource
+        # ── Step 4: Extract text (LaTeX preferred, fallback to PDF) ───────
         from paper_tool.downloaders.arxiv import ArxivDownloader
         from paper_tool.pdf_parser import extract_text_from_latex
 
         char_budget = cfg.llm_max_input_tokens * 4
         paper_text: str | None = None
         tex_path: "Path | None" = None
-        text_source = "PDF"
 
         if isinstance(downloader, ArxivDownloader):
-            task4 = progress.add_task("[cyan]下载 LaTeX 源码...", total=None)
-            try:
-                tex_path = downloader.download_latex_source(metadata, cfg.papers_dir)
-                if tex_path:
-                    paper_text = extract_text_from_latex(tex_path, max_chars=char_budget)
-                    text_source = "LaTeX"
-                    _done(task4, f"[green]✓ LaTeX 源码解析完成 {len(paper_text):,} 字符")
-                else:
-                    _done(task4, "[yellow]⚠ 无 LaTeX 源码，降级到 PDF 解析")
-            except Exception as e:
-                _done(task4, f"[yellow]⚠ LaTeX 解析失败，降级到 PDF: {e}")
+            with pipeline.step("下载 LaTeX 源码并解析文本") as step:
+                try:
+                    tex_path = downloader.download_latex_source(metadata, cfg.papers_dir)
+                    if tex_path:
+                        paper_text = extract_text_from_latex(tex_path, max_chars=char_budget)
+                        step.done(f"LaTeX 解析完成 {len(paper_text):,} 字符")
+                    else:
+                        step.warn("无 LaTeX 源码，降级到 PDF 解析")
+                except Exception as e:
+                    step.warn(f"LaTeX 解析失败，降级到 PDF: {e}")
 
         if paper_text is None:
-            task4b = progress.add_task("[cyan]提取 PDF 文本...", total=None)
-            try:
-                paper_text = extract_text(pdf_path, max_chars=char_budget)
-                _done(task4b, f"[green]✓ PDF 文本提取完成 {len(paper_text):,} 字符")
-            except Exception as e:
-                progress.stop()
-                error_console.print(f"\n[ERROR] PDF 文本提取失败: {e}")
-                return False
+            with pipeline.step("提取 PDF 文本") as step:
+                try:
+                    paper_text = extract_text(pdf_path, max_chars=char_budget)
+                    step.done(f"PDF 文本提取完成 {len(paper_text):,} 字符")
+                except Exception as e:
+                    step.fail(str(e))
+                    return False
 
         pdf_text = paper_text
 
-        # ── Step 5: Create Notion page ────────────────────────────────────
-        task5 = progress.add_task("[cyan]创建 Notion 页面...", total=None)
-        try:
-            page_id = notion.create_page(metadata)
-            _done(task5, "[green]✓ Notion 页面创建成功")
-        except Exception as e:
-            progress.stop()
-            error_console.print(f"\n[ERROR] 创建 Notion 页面失败: {e}")
-            return False
-
-        # ── Step 6a: LLM classification (title + abstract only) ──────────
-        if not skip_llm:
-            task6a = progress.add_task("[cyan]LLM 分类标注中...", total=None)
+        # ── Step 5: Create Notion page ─────────────────────────────────────
+        with pipeline.step("创建 Notion 页面") as step:
             try:
-                available_options = notion.get_classification_options()
-                classifier = LLMClassifier()
-                classification = classifier.classify(
-                    metadata,
-                    available_options,
-                    debug=debug,
-                    stream=stream,
-                )
-                notion.update_classifications(page_id, classification)
-
-                new_tags: list[str] = []
-                new_tags += [t for t in classification.paper_type
-                             if t not in available_options.get("paper_type", [])]
-                new_tags += [t for t in classification.research_areas
-                             if t not in available_options.get("research_areas", [])]
-                new_tags += [t for t in classification.institutions
-                             if t not in available_options.get("institutions", [])]
-
-                suffix = f"  [新增: {', '.join(new_tags)}]" if new_tags else ""
-                _done(task6a, f"[green]✓ 分类完成{suffix}")
+                page_id = notion.create_page(metadata)
+                step.done("创建成功")
             except Exception as e:
-                _done(task6a, f"[yellow]⚠ 分类失败（已跳过）: {e}")
+                step.fail(str(e))
+                return False
 
-        # ── Step 6c: LLM one-sentence summary (title + abstract only) ────
+        # ── Step 6a: LLM classification (title + abstract only) ───────────
         if not skip_llm:
-            task6c = progress.add_task("[cyan]LLM 生成一句话摘要...", total=None)
-            try:
-                summarizer = LLMSummarizer()
-                summary = summarizer.summarize(metadata, debug=debug, stream=stream)
-                notion.update_summary(page_id, summary)
-                _done(task6c, "[green]✓ 一句话摘要写入完成")
-            except Exception as e:
-                _done(task6c, f"[yellow]⚠ 一句话摘要生成失败（已跳过）: {e}")
+            with pipeline.step("LLM 分类标注") as step:
+                try:
+                    available_options = notion.get_classification_options()
+                    classifier = LLMClassifier()
+                    classification = classifier.classify(
+                        metadata,
+                        available_options,
+                        debug=debug,
+                        stream=stream,
+                    )
+                    notion.update_classifications(page_id, classification)
 
-        # ── Step 6b-pre: Extract and translate figures (before note gen) ───
+                    new_tags: list[str] = []
+                    new_tags += [t for t in classification.paper_type
+                                 if t not in available_options.get("paper_type", [])]
+                    new_tags += [t for t in classification.research_areas
+                                 if t not in available_options.get("research_areas", [])]
+                    new_tags += [t for t in classification.institutions
+                                 if t not in available_options.get("institutions", [])]
+
+                    suffix = f"新增: {', '.join(new_tags)}" if new_tags else "完成"
+                    step.done(suffix)
+                except Exception as e:
+                    step.warn(f"分类失败（已跳过）: {e}")
+
+        # ── Step 6c: LLM one-sentence summary (title + abstract only) ─────
+        if not skip_llm:
+            with pipeline.step("LLM 生成一句话摘要") as step:
+                try:
+                    summarizer = LLMSummarizer()
+                    summary = summarizer.summarize(metadata, debug=debug, stream=stream)
+                    notion.update_summary(page_id, summary)
+                    step.done("一句话摘要写入完成")
+                except Exception as e:
+                    step.warn(f"一句话摘要生成失败（已跳过）: {e}")
+
+        # ── Step 6b-pre: Extract and translate figures (before note gen) ──
         figures = []
         tables = []
         if isinstance(downloader, ArxivDownloader) and tex_path is not None:
             from paper_tool.figure_extractor import convert_pdf_figures, parse_figures
             from paper_tool.table_extractor import parse_tables
 
-            task_fig = progress.add_task("[cyan]提取论文图片...", total=None)
-            try:
-                figures_dir = downloader.get_figures_dir(metadata, cfg.papers_dir)
-                n_converted = convert_pdf_figures(figures_dir)
-                if n_converted:
-                    progress.console.print(
-                        f"  [dim]已将 {n_converted} 个 PDF 图片转换为 PNG[/dim]"
+            with pipeline.step("提取论文图片") as step:
+                try:
+                    figures_dir = downloader.get_figures_dir(metadata, cfg.papers_dir)
+                    n_converted = convert_pdf_figures(figures_dir)
+                    figures = parse_figures(
+                        tex_path,
+                        figures_dir,
+                        max_figures=cfg.max_figures,
+                        force_rerender=cfg.rerender_figures,
                     )
-                figures = parse_figures(
-                    tex_path,
-                    figures_dir,
-                    max_figures=cfg.max_figures,
-                    force_rerender=cfg.rerender_figures,
-                )
-                if figures:
-                    backend_counts: dict[str, int] = {}
-                    for fig in figures:
-                        backend = fig.render_backend or "unknown"
-                        backend_counts[backend] = backend_counts.get(backend, 0) + 1
-                    backend_summary = ", ".join(
-                        f"{name}={count}" for name, count in sorted(backend_counts.items())
-                    )
-                    _done(task_fig, f"[green]✓ 找到 {len(figures)} 张图片  [{backend_summary}]")
-                else:
-                    _done(task_fig, "[yellow]⚠ 未找到可用图片")
-            except Exception as e:
-                _done(task_fig, f"[yellow]⚠ 图片提取失败（已跳过）: {e}")
-                figures = []
+                    if figures:
+                        backend_counts: dict[str, int] = {}
+                        for fig in figures:
+                            backend = fig.render_backend or "unknown"
+                            backend_counts[backend] = backend_counts.get(backend, 0) + 1
+                        backend_summary = ", ".join(
+                            f"{name}={count}" for name, count in sorted(backend_counts.items())
+                        )
+                        convert_msg = f"，PDF→PNG {n_converted} 张" if n_converted else ""
+                        step.done(f"找到 {len(figures)} 张图片 [{backend_summary}]{convert_msg}")
+                    else:
+                        step.warn("未找到可用图片")
+                except Exception as e:
+                    step.warn(f"图片提取失败（已跳过）: {e}")
+                    figures = []
 
-            task_tbl = progress.add_task("[cyan]提取并渲染论文表格...", total=None)
-            try:
-                tables_dir = downloader.get_figures_dir(metadata, cfg.papers_dir).parent / "tables"
-                tables = parse_tables(
-                    tex_path,
-                    tables_dir,
-                    max_tables=cfg.max_tables,
-                    force_rerender=cfg.rerender_tables,
-                )
-                if tables:
-                    backend_counts: dict[str, int] = {}
-                    for table in tables:
-                        backend = table.render_backend or "unknown"
-                        backend_counts[backend] = backend_counts.get(backend, 0) + 1
-                    backend_summary = ", ".join(
-                        f"{name}={count}" for name, count in sorted(backend_counts.items())
+            with pipeline.step("提取并渲染论文表格") as step:
+                try:
+                    tables_dir = downloader.get_figures_dir(metadata, cfg.papers_dir).parent / "tables"
+                    tables = parse_tables(
+                        tex_path,
+                        tables_dir,
+                        max_tables=cfg.max_tables,
+                        force_rerender=cfg.rerender_tables,
                     )
-                    _done(task_tbl, f"[green]✓ 找到 {len(tables)} 张表格  [{backend_summary}]")
-                else:
-                    _done(task_tbl, "[yellow]⚠ 未找到可用表格")
-            except Exception as e:
-                _done(task_tbl, f"[yellow]⚠ 表格提取失败（已跳过）: {e}")
-                tables = []
+                    if tables:
+                        backend_counts: dict[str, int] = {}
+                        for table in tables:
+                            backend = table.render_backend or "unknown"
+                            backend_counts[backend] = backend_counts.get(backend, 0) + 1
+                        backend_summary = ", ".join(
+                            f"{name}={count}" for name, count in sorted(backend_counts.items())
+                        )
+                        step.done(f"找到 {len(tables)} 张表格 [{backend_summary}]")
+                    else:
+                        step.warn("未找到可用表格")
+                except Exception as e:
+                    step.warn(f"表格提取失败（已跳过）: {e}")
+                    tables = []
 
         if not skip_llm and figures:
             from paper_tool.llm_analyzer import translate_captions
 
-            task_trans = progress.add_task("[cyan]翻译图片说明...", total=None)
-            try:
-                figures = translate_captions(
-                    figures,
-                    stream=stream,
-                    stream_title="LLM 流式输出 · 图片说明翻译",
-                )
-                _done(task_trans, "[green]✓ 图片说明翻译完成")
-            except Exception as e:
-                _done(task_trans, f"[yellow]⚠ 翻译失败（保留原文）: {e}")
+            with pipeline.step("翻译图片说明") as step:
+                try:
+                    figures = translate_captions(
+                        figures,
+                        stream=stream,
+                        stream_title="LLM 流式输出 · 图片说明翻译",
+                    )
+                    step.done("图片说明翻译完成")
+                except Exception as e:
+                    step.warn(f"翻译失败（保留原文）: {e}")
 
         if not skip_llm and tables:
             from paper_tool.llm_analyzer import translate_captions
 
-            task_trans_tbl = progress.add_task("[cyan]翻译表格说明...", total=None)
-            try:
-                tables = translate_captions(
-                    tables,
-                    stream=stream,
-                    stream_title="LLM 流式输出 · 表格说明翻译",
-                )
-                _done(task_trans_tbl, "[green]✓ 表格说明翻译完成")
-            except Exception as e:
-                _done(task_trans_tbl, f"[yellow]⚠ 翻译失败（保留原文）: {e}")
+            with pipeline.step("翻译表格说明") as step:
+                try:
+                    tables = translate_captions(
+                        tables,
+                        stream=stream,
+                        stream_title="LLM 流式输出 · 表格说明翻译",
+                    )
+                    step.done("表格说明翻译完成")
+                except Exception as e:
+                    step.warn(f"翻译失败（保留原文）: {e}")
 
         # ── Step 6b: LLM note generation (with figure info for placement) ─
         if not skip_llm:
-            task6b = progress.add_task(
-                f"[cyan]LLM 生成笔记 ({cfg.llm_model})...", total=None
-            )
-            try:
-                analyzer = LLMAnalyzer()
-                note = analyzer.analyze(
-                    metadata, pdf_text, debug=debug,
-                    figures=figures if figures else None,
-                    tables=tables if tables else None,
-                    stream=stream,
-                )
-                _done(task6b, "[green]✓ 笔记生成完成")
-            except Exception as e:
-                _done(task6b, f"[yellow]⚠ 笔记生成失败（已跳过）: {e}")
-                note = None
+            with pipeline.step(f"LLM 生成笔记 ({cfg.llm_model})") as step:
+                try:
+                    analyzer = LLMAnalyzer()
+                    note = analyzer.analyze(
+                        metadata,
+                        pdf_text,
+                        debug=debug,
+                        figures=figures if figures else None,
+                        tables=tables if tables else None,
+                        stream=stream,
+                    )
+                    step.done("笔记生成完成")
+                except Exception as e:
+                    step.warn(f"笔记生成失败（已跳过）: {e}")
+                    note = None
         else:
             note = None
 
-        # ── Step 7: Write note + figures + tables to Notion ──────────────
+        # ── Step 7: Write note + figures + tables to Notion ───────────────
         has_visuals = bool(figures or tables)
         if note is not None:
-            task7 = progress.add_task("[cyan]将笔记和图表写入 Notion...", total=None)
-            try:
-                if has_visuals:
-                    n = notion.append_note_with_figures(page_id, note, figures, tables)
-                    total_vis = len(figures) + len(tables)
-                    _done(task7, f"[green]✓ 笔记写入完成，上传 {n}/{total_vis} 张图表")
-                else:
-                    notion.append_note(page_id, note)
-                    _done(task7, "[green]✓ 笔记写入完成")
-            except Exception as e:
-                _done(task7, f"[yellow]⚠ 笔记写入失败: {e}")
-                progress.stop()
-                return False
+            with pipeline.step("将笔记和图表写入 Notion") as step:
+                try:
+                    if has_visuals:
+                        n = notion.append_note_with_figures(page_id, note, figures, tables)
+                        total_vis = len(figures) + len(tables)
+                        step.done(f"笔记写入完成，上传 {n}/{total_vis} 张图表")
+                    else:
+                        notion.append_note(page_id, note)
+                        step.done("笔记写入完成")
+                except Exception as e:
+                    step.fail(f"笔记写入失败: {e}")
+                    return False
         elif has_visuals:
-            task7 = progress.add_task("[cyan]上传论文图表...", total=None)
-            try:
-                n = notion.append_figures(page_id, figures + tables)
-                total_vis = len(figures) + len(tables)
-                _done(task7, f"[green]✓ 上传 {n}/{total_vis} 张图表完成")
-            except Exception as e:
-                _done(task7, f"[yellow]⚠ 图表上传失败: {e}")
-                progress.stop()
-                return False
+            with pipeline.step("上传论文图表") as step:
+                try:
+                    n = notion.append_figures(page_id, figures + tables)
+                    total_vis = len(figures) + len(tables)
+                    step.done(f"上传 {n}/{total_vis} 张图表完成")
+                except Exception as e:
+                    step.fail(f"图表上传失败: {e}")
+                    return False
 
-        progress.stop()
-
-    page_url = notion.get_page_url(page_id)
-    console.print(
-        Panel(
-            Text.assemble(
-                ("论文: ", "bold"),
-                (metadata.title + "\n", "cyan"),
-                ("作者: ", "bold"),
-                (metadata.authors_str[:100] + "\n", ""),
-                ("来源: ", "bold"),
-                (metadata.source.value + "\n", ""),
-                ("目录:  ", "bold"),
-                (str(pdf_path.parent) + "\n", "dim"),
-                ("Notion: ", "bold"),
-                (page_url, "link " + page_url),
-            ),
-            title="[green]✓ 添加成功",
-            border_style="green",
+        page_url = notion.get_page_url(page_id)
+        console.print(
+            Panel(
+                Text.assemble(
+                    ("论文: ", "bold"),
+                    (metadata.title + "\n", "cyan"),
+                    ("作者: ", "bold"),
+                    (metadata.authors_str[:100] + "\n", ""),
+                    ("来源: ", "bold"),
+                    (metadata.source.value + "\n", ""),
+                    ("目录:  ", "bold"),
+                    (str(pdf_path.parent) + "\n", "dim"),
+                    ("Notion: ", "bold"),
+                    (page_url, "link " + page_url),
+                ),
+                title="[green]✓ 添加成功",
+                border_style="green",
+            )
         )
-    )
-    return True
+        return True
 
 
 # ── Commands ─────────────────────────────────────────────────────────────────
@@ -352,11 +443,16 @@ def add(
         False, "--debug", help="打印 LLM 原始 prompt 和回包，用于排查分类/笔记问题"
     ),
     stream: bool = typer.Option(
-        False, "--stream", help="在固定小窗口实时显示 LLM 流式输出"
+        False, "--stream/--no-stream", help="实时显示 LLM token 流式输出（默认关闭）"
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="强制覆盖：若页面已存在则先归档旧页面再重建"
     ),
 ) -> None:
     """添加一篇论文：下载 PDF、写入 Notion、生成 AI 笔记。"""
-    success = _process_paper(url, skip_llm=skip_llm, debug=debug, stream=stream)
+    success = _process_paper(
+        url, skip_llm=skip_llm, debug=debug, stream=stream, force=force
+    )
     if not success:
         raise typer.Exit(code=1)
 
@@ -377,7 +473,10 @@ def batch(
         False, "--debug", help="打印 LLM 原始 prompt 和回包，用于排查问题"
     ),
     stream: bool = typer.Option(
-        False, "--stream", help="在固定小窗口实时显示 LLM 流式输出"
+        False, "--stream/--no-stream", help="实时显示 LLM token 流式输出（默认关闭）"
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="强制覆盖：若页面已存在则先归档旧页面再重建"
     ),
 ) -> None:
     """批量添加论文（从文件读取 URL 列表，每行一个）。"""
@@ -402,7 +501,9 @@ def batch(
 
     for i, url in enumerate(urls, 1):
         console.print(f"[bold dim]─── [{i}/{len(urls)}] {url} ───[/bold dim]")
-        success = _process_paper(url, skip_llm=skip_llm, debug=debug, stream=stream)
+        success = _process_paper(
+            url, skip_llm=skip_llm, debug=debug, stream=stream, force=force
+        )
         if success:
             success_count += 1
         else:
@@ -589,7 +690,7 @@ def chat(
     ),
     debug: bool = typer.Option(False, "--debug", help="打印调试信息"),
     stream: bool = typer.Option(
-        False, "--stream", help="在固定小窗口实时显示 LLM 流式输出"
+        True, "--stream/--no-stream", help="实时显示 LLM 流式输出"
     ),
 ) -> None:
     """与论文进行多轮对话问答（含完整论文上下文）。

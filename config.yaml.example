@@ -34,9 +34,9 @@ llm:
   rerender_tables: false
   # 温度（0.0 = 确定性输出，适合摘要任务）
   temperature: 0.2
-  # 是否在终端底部显示固定高度的小窗口，实时展示 LLM 流式输出
+  # 是否显示 LLM token 流式输出（与阶段进度条独立）
   stream_window: false
-  # 流式窗口高度（行数）
+  # 兼容旧版本保留字段（当前增量打印模式下基本无需调整）
   stream_window_height: 8
   # 笔记输出格式：
   #   json     - 模型输出结构化 JSON，解析后写入带标题的 Notion 块（默认）

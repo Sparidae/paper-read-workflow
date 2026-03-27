@@ -126,8 +126,11 @@ uv run paper-tool batch urls.txt
 # 调试模式：打印 LLM 原始 prompt 和返回内容
 uv run paper-tool add --debug "https://arxiv.org/abs/2301.00001"
 
-# 在固定小窗口实时展示 LLM 流式输出
+# 默认输出单行阶段进度条（无心跳刷屏）
+# 如需看 LLM token 流式输出，再显式开启 --stream
 uv run paper-tool add --stream "https://arxiv.org/abs/2301.00001"
+# 显式关闭 LLM token 流式输出（默认即关闭）
+uv run paper-tool add --no-stream "https://arxiv.org/abs/2301.00001"
 ```
 
 ### 与论文多轮问答
@@ -184,8 +187,8 @@ add-paper "https://arxiv.org/abs/2301.00001"
 ```yaml
 llm:
   model: "openai/gpt-4o"                              # OpenAI GPT-4o（官方）
-  stream_window: false                                # 开启后在终端底部显示 LLM 流式小窗口
-  stream_window_height: 8                             # 小窗口高度（行数）
+  stream_window: false                                # 开启后显示 LLM token 流式输出（与阶段进度条独立）
+  stream_window_height: 8                             # 兼容旧版本保留字段
   # model: "openai/deepseek-chat"                     # DeepSeek（配合 OPENAI_BASE_URL）
   # model: "openai/moonshot-v1-8k"                    # Kimi（配合 OPENAI_BASE_URL）
   # model: "openai/qwen-max"                          # 通义千问（配合 OPENAI_BASE_URL）
