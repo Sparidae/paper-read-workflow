@@ -5,6 +5,7 @@ from __future__ import annotations
 import traceback
 
 from paper_tool.config import get_config
+from paper_tool.llm_stream import completion_to_text
 from paper_tool.models import PaperMetadata
 from paper_tool.retry import with_retry as _with_retry
 
@@ -36,13 +37,12 @@ class LLMSummarizer:
         self,
         metadata: PaperMetadata,
         debug: bool = False,
+        stream: bool = False,
     ) -> str:
         """
         Call LLM with title + abstract only, return one-sentence summary string.
         Raises on LLM failure so the caller can decide whether to skip.
         """
-        import litellm
-
         def _dbg(label: str, content: str = "") -> None:
             if not debug:
                 return
@@ -70,9 +70,17 @@ class LLMSummarizer:
         if self._cfg.openai_base_url:
             kwargs["api_base"] = self._cfg.openai_base_url
 
+        stream_enabled = stream or self._cfg.llm_stream_window
         try:
-            response = _with_retry(
-                lambda: litellm.completion(**kwargs), max_attempts=3, base_delay=3.0,
+            result = _with_retry(
+                lambda: completion_to_text(
+                    request_kwargs=kwargs,
+                    stream=stream_enabled,
+                    stream_title="LLM 流式输出 · 摘要",
+                    stream_height=self._cfg.llm_stream_window_height,
+                ),
+                max_attempts=3,
+                base_delay=3.0,
             )
         except Exception:
             if debug:
@@ -80,15 +88,11 @@ class LLMSummarizer:
                 traceback.print_exc()
             raise
 
-        choice = response.choices[0]
-        raw = choice.message.content or ""
-
-        if not raw:
-            raw = getattr(choice.message, "reasoning_content", None) or ""
+        raw = result.text
 
         if debug:
-            finish_reason = getattr(choice, "finish_reason", "unknown")
-            usage = getattr(response, "usage", None)
+            finish_reason = result.finish_reason or ("stream" if stream_enabled else "unknown")
+            usage = result.usage
             usage_str = (
                 f"prompt={usage.prompt_tokens} completion={usage.completion_tokens} total={usage.total_tokens}"
                 if usage else "N/A"

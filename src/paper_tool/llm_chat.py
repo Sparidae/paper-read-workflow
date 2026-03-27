@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from paper_tool.config import get_config
+from paper_tool.llm_stream import completion_to_text
 from paper_tool.models import PaperMetadata
 
 
@@ -115,10 +116,8 @@ class ChatSession:
         )
         self.messages: list[dict] = []
 
-    def ask(self, question: str, debug: bool = False) -> str:
+    def ask(self, question: str, debug: bool = False, stream: bool = False) -> str:
         """Send a question and return the model's response."""
-        import litellm
-
         self.messages.append({"role": "user", "content": question})
 
         all_messages = [
@@ -139,11 +138,13 @@ class ChatSession:
             print(f"\n[DEBUG] 发送 {len(all_messages)} 条消息，"
                   f"最新问题: {question[:80]}", flush=True)
 
-        response = litellm.completion(**kwargs)
-        choice = response.choices[0]
-        answer = choice.message.content or ""
-        if not answer:
-            answer = getattr(choice.message, "reasoning_content", None) or ""
+        result = completion_to_text(
+            request_kwargs=kwargs,
+            stream=stream or self._cfg.llm_stream_window,
+            stream_title="LLM 流式输出 · Chat",
+            stream_height=self._cfg.llm_stream_window_height,
+        )
+        answer = result.text
 
         self.messages.append({"role": "assistant", "content": answer})
         return answer.strip()

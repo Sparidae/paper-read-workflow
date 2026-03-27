@@ -25,7 +25,12 @@ console = Console()
 error_console = Console(stderr=True, style="bold red")
 
 
-def _process_paper(url: str, skip_llm: bool = False, debug: bool = False) -> bool:
+def _process_paper(
+    url: str,
+    skip_llm: bool = False,
+    debug: bool = False,
+    stream: bool = False,
+) -> bool:
     """
     Core pipeline: download -> extract -> analyze -> write to Notion.
     Returns True on success, False on failure.
@@ -144,7 +149,12 @@ def _process_paper(url: str, skip_llm: bool = False, debug: bool = False) -> boo
             try:
                 available_options = notion.get_classification_options()
                 classifier = LLMClassifier()
-                classification = classifier.classify(metadata, available_options, debug=debug)
+                classification = classifier.classify(
+                    metadata,
+                    available_options,
+                    debug=debug,
+                    stream=stream,
+                )
                 notion.update_classifications(page_id, classification)
 
                 new_tags: list[str] = []
@@ -165,7 +175,7 @@ def _process_paper(url: str, skip_llm: bool = False, debug: bool = False) -> boo
             task6c = progress.add_task("[cyan]LLM 生成一句话摘要...", total=None)
             try:
                 summarizer = LLMSummarizer()
-                summary = summarizer.summarize(metadata, debug=debug)
+                summary = summarizer.summarize(metadata, debug=debug, stream=stream)
                 notion.update_summary(page_id, summary)
                 _done(task6c, "[green]✓ 一句话摘要写入完成")
             except Exception as e:
@@ -236,7 +246,11 @@ def _process_paper(url: str, skip_llm: bool = False, debug: bool = False) -> boo
 
             task_trans = progress.add_task("[cyan]翻译图片说明...", total=None)
             try:
-                figures = translate_captions(figures)
+                figures = translate_captions(
+                    figures,
+                    stream=stream,
+                    stream_title="LLM 流式输出 · 图片说明翻译",
+                )
                 _done(task_trans, "[green]✓ 图片说明翻译完成")
             except Exception as e:
                 _done(task_trans, f"[yellow]⚠ 翻译失败（保留原文）: {e}")
@@ -246,7 +260,11 @@ def _process_paper(url: str, skip_llm: bool = False, debug: bool = False) -> boo
 
             task_trans_tbl = progress.add_task("[cyan]翻译表格说明...", total=None)
             try:
-                tables = translate_captions(tables)
+                tables = translate_captions(
+                    tables,
+                    stream=stream,
+                    stream_title="LLM 流式输出 · 表格说明翻译",
+                )
                 _done(task_trans_tbl, "[green]✓ 表格说明翻译完成")
             except Exception as e:
                 _done(task_trans_tbl, f"[yellow]⚠ 翻译失败（保留原文）: {e}")
@@ -262,6 +280,7 @@ def _process_paper(url: str, skip_llm: bool = False, debug: bool = False) -> boo
                     metadata, pdf_text, debug=debug,
                     figures=figures if figures else None,
                     tables=tables if tables else None,
+                    stream=stream,
                 )
                 _done(task6b, "[green]✓ 笔记生成完成")
             except Exception as e:
@@ -332,9 +351,12 @@ def add(
     debug: bool = typer.Option(
         False, "--debug", help="打印 LLM 原始 prompt 和回包，用于排查分类/笔记问题"
     ),
+    stream: bool = typer.Option(
+        False, "--stream", help="在固定小窗口实时显示 LLM 流式输出"
+    ),
 ) -> None:
     """添加一篇论文：下载 PDF、写入 Notion、生成 AI 笔记。"""
-    success = _process_paper(url, skip_llm=skip_llm, debug=debug)
+    success = _process_paper(url, skip_llm=skip_llm, debug=debug, stream=stream)
     if not success:
         raise typer.Exit(code=1)
 
@@ -353,6 +375,9 @@ def batch(
     ),
     debug: bool = typer.Option(
         False, "--debug", help="打印 LLM 原始 prompt 和回包，用于排查问题"
+    ),
+    stream: bool = typer.Option(
+        False, "--stream", help="在固定小窗口实时显示 LLM 流式输出"
     ),
 ) -> None:
     """批量添加论文（从文件读取 URL 列表，每行一个）。"""
@@ -377,7 +402,7 @@ def batch(
 
     for i, url in enumerate(urls, 1):
         console.print(f"[bold dim]─── [{i}/{len(urls)}] {url} ───[/bold dim]")
-        success = _process_paper(url, skip_llm=skip_llm, debug=debug)
+        success = _process_paper(url, skip_llm=skip_llm, debug=debug, stream=stream)
         if success:
             success_count += 1
         else:
@@ -563,6 +588,9 @@ def chat(
         help="论文文件名、Arxiv ID 关键词或完整路径（如 2603.08706、Agentic）",
     ),
     debug: bool = typer.Option(False, "--debug", help="打印调试信息"),
+    stream: bool = typer.Option(
+        False, "--stream", help="在固定小窗口实时显示 LLM 流式输出"
+    ),
 ) -> None:
     """与论文进行多轮对话问答（含完整论文上下文）。
 
@@ -630,7 +658,7 @@ def chat(
 
         console.print(f"[bold blue]AI[/bold blue] [dim](第 {session.turn_count + 1} 轮)[/dim]")
         try:
-            answer = session.ask(question, debug=debug)
+            answer = session.ask(question, debug=debug, stream=stream)
         except Exception as e:
             console.print(f"[red]请求失败: {e}[/red]")
             # Roll back the user message so the failed turn doesn't corrupt history

@@ -203,6 +203,20 @@ class Config:
     def llm_temperature(self) -> float:
         return self._yaml.get("llm", {}).get("temperature", 0.2)
 
+    @property
+    def llm_stream_window(self) -> bool:
+        """Whether to render a small live window for streamed LLM output."""
+        return bool(self._yaml.get("llm", {}).get("stream_window", False))
+
+    @property
+    def llm_stream_window_height(self) -> int:
+        """Fixed terminal height (lines) for the live stream window."""
+        raw = self._yaml.get("llm", {}).get("stream_window_height", 8)
+        try:
+            return max(4, int(raw))
+        except (TypeError, ValueError):
+            return 8
+
     # ── Storage ──────────────────────────────────────────────────────────────
 
     @property
@@ -247,6 +261,8 @@ class Config:
         table.add_row("LLM 模型", self.llm_model)
         table.add_row("最大输入 Token", str(self.llm_max_input_tokens))
         table.add_row("最大输出 Token", str(self.llm_max_output_tokens))
+        table.add_row("流式小窗口", "开启" if self.llm_stream_window else "关闭")
+        table.add_row("流式窗口高度", str(self.llm_stream_window_height))
         table.add_row("PDF 存储目录", str(self.papers_dir))
         table.add_row("Notion Token", mask(os.getenv("NOTION_TOKEN", "")))
         table.add_row("Notion Database ID", mask(os.getenv("NOTION_DATABASE_ID", "")))

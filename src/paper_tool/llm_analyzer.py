@@ -8,6 +8,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from paper_tool.config import get_config
+from paper_tool.llm_stream import completion_to_text
 from paper_tool.models import FigureInfo, PaperMetadata, PaperNote
 from paper_tool.retry import retry as _retry, with_retry as _with_retry
 
@@ -84,10 +85,15 @@ def _parse_response(raw: str) -> PaperNote:
     )
 
 
-def _llm_call(system: str, user: str, *, max_tokens: int | None = None) -> str:
+def _llm_call(
+    system: str,
+    user: str,
+    *,
+    max_tokens: int | None = None,
+    stream: bool = False,
+    stream_title: str = "LLM 流式输出",
+) -> str:
     """Single LLM call, returns raw response text. Raises on empty response."""
-    import litellm
-
     cfg = get_config()
     kwargs: dict = {
         "model": cfg.llm_model,
@@ -100,12 +106,13 @@ def _llm_call(system: str, user: str, *, max_tokens: int | None = None) -> str:
     }
     if cfg.openai_base_url:
         kwargs["api_base"] = cfg.openai_base_url
-    response = litellm.completion(**kwargs)
-    choice = response.choices[0]
-
-    raw = choice.message.content or ""
-    if not raw.strip():
-        raw = getattr(choice.message, "reasoning_content", None) or ""
+    result = completion_to_text(
+        request_kwargs=kwargs,
+        stream=stream or cfg.llm_stream_window,
+        stream_title=stream_title,
+        stream_height=cfg.llm_stream_window_height,
+    )
+    raw = result.text
 
     raw = raw.strip()
     if not raw:
@@ -121,7 +128,12 @@ def _strip_json_fence(raw: str) -> str:
 
 
 @_retry(max_attempts=3, base_delay=3.0)
-def translate_captions(figures: list[FigureInfo]) -> list[FigureInfo]:
+def translate_captions(
+    figures: list[FigureInfo],
+    *,
+    stream: bool = False,
+    stream_title: str = "LLM 流式输出 · 图注翻译",
+) -> list[FigureInfo]:
     """
     Translate figure captions to Chinese using a single LLM call.
 
@@ -146,7 +158,12 @@ def translate_captions(figures: list[FigureInfo]) -> list[FigureInfo]:
     )
     user = f"请翻译以下图片说明：\n{captions_input}"
 
-    raw = _llm_call(system, user)
+    raw = _llm_call(
+        system,
+        user,
+        stream=stream,
+        stream_title=stream_title,
+    )
     translated: list[str] = json.loads(_strip_json_fence(raw))
     if not isinstance(translated, list) or len(translated) != len(to_translate):
         raise ValueError(
@@ -198,6 +215,7 @@ class LLMAnalyzer:
         debug: bool = False,
         figures: list[FigureInfo] | None = None,
         tables: list[FigureInfo] | None = None,
+        stream: bool = False,
     ) -> PaperNote:
         """
         Generate reading notes. Does NOT perform classification.
@@ -209,8 +227,6 @@ class LLMAnalyzer:
         augmented with instructions to place [FIGURE:N] markers in the output.
         """
         import traceback
-        import litellm
-
         def _dbg(label: str, content: str = "") -> None:
             if not debug:
                 return
@@ -250,6 +266,7 @@ class LLMAnalyzer:
             user_prompt[:1000],
         )
 
+        stream_enabled = stream or self._cfg.llm_stream_window
         kwargs: dict = {
             "model": self._cfg.llm_model,
             "messages": [
@@ -264,7 +281,14 @@ class LLMAnalyzer:
 
         try:
             response = _with_retry(
-                lambda: litellm.completion(**kwargs), max_attempts=3, base_delay=3.0,
+                lambda: completion_to_text(
+                    request_kwargs=kwargs,
+                    stream=stream_enabled,
+                    stream_title="LLM 流式输出 · 笔记",
+                    stream_height=self._cfg.llm_stream_window_height,
+                ),
+                max_attempts=3,
+                base_delay=3.0,
             )
         except Exception:
             if debug:
@@ -272,16 +296,11 @@ class LLMAnalyzer:
                 traceback.print_exc()
             raise
 
-        choice = response.choices[0]
-        raw = choice.message.content or ""
-
-        # Some thinking models (e.g. kimi-k2.5) put output in reasoning_content
-        if not raw:
-            raw = getattr(choice.message, "reasoning_content", None) or ""
+        raw = response.text
 
         if debug:
-            finish_reason = getattr(choice, "finish_reason", "unknown")
-            usage = getattr(response, "usage", None)
+            finish_reason = response.finish_reason or ("stream" if stream_enabled else "unknown")
+            usage = response.usage
             usage_str = (
                 f"prompt={usage.prompt_tokens} completion={usage.completion_tokens} total={usage.total_tokens}"
                 if usage else "N/A"
