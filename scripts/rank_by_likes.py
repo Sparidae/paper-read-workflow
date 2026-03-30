@@ -100,41 +100,54 @@ def _find_likes_in_obj(obj, depth=0) -> Optional[int]:
 
 
 async def _try_rest_api(
-    client: httpx.AsyncClient, arxiv_id: str, debug: bool
-) -> Optional[int]:
-    """尝试直接调用 alphaxiv REST API 获取点赞数。"""
+    client: httpx.AsyncClient, arxiv_id: str, verbose: bool
+) -> tuple[Optional[int], str]:
+    """尝试直接调用 alphaxiv REST API，返回 (likes, error_reason)。"""
     for path in API_PATHS:
         url = ALPHAXIV_API_BASE + path.format(id=arxiv_id)
         try:
             resp = await client.get(url, timeout=10)
+            if verbose:
+                console.print(f"  REST {url} → HTTP {resp.status_code}")
             if resp.status_code == 200:
                 try:
                     data = resp.json()
-                    result = _find_likes_in_obj(data)
-                    if debug:
-                        console.print(f"[green]REST API 命中: {url}[/green]")
+                    if verbose:
                         console.print(
-                            f"[dim]响应: {json.dumps(data, ensure_ascii=False)[:2000]}[/dim]"
+                            f"  响应: {json.dumps(data, ensure_ascii=False)[:1000]}"
                         )
+                    result = _find_likes_in_obj(data)
                     if result is not None:
-                        return result
-                except Exception:
-                    pass
-        except Exception:
-            pass
-    return None
+                        return result, ""
+                except Exception as e:
+                    if verbose:
+                        console.print(f"  JSON 解析失败: {e}")
+        except httpx.TimeoutException:
+            if verbose:
+                console.print(f"  REST {url} → 超时")
+        except Exception as e:
+            if verbose:
+                console.print(f"  REST {url} → {type(e).__name__}: {e}")
+    return None, "rest_api_miss"
 
 
 async def _try_html_scrape(
-    client: httpx.AsyncClient, arxiv_id: str, debug: bool
-) -> Optional[int]:
+    client: httpx.AsyncClient, arxiv_id: str, verbose: bool
+) -> tuple[Optional[int], str]:
     """爬取 alphaxiv 页面，从 __NEXT_DATA__ 或 HTML 提取点赞数。"""
     url = f"{ALPHAXIV_BASE}/{arxiv_id}"
-    resp = await client.get(url, follow_redirects=True, timeout=20)
+    try:
+        resp = await client.get(url, follow_redirects=True, timeout=20)
+    except httpx.TimeoutException:
+        return None, "timeout"
+    except Exception as e:
+        return None, f"conn_error:{type(e).__name__}"
+
+    if verbose:
+        console.print(f"  HTML {url} → HTTP {resp.status_code}")
+
     if resp.status_code != 200:
-        if debug:
-            console.print(f"[red]{arxiv_id}: HTML 页面 HTTP {resp.status_code}[/red]")
-        return None
+        return None, f"http_{resp.status_code}"
 
     html = resp.text
 
@@ -143,21 +156,21 @@ async def _try_html_scrape(
     if next_match:
         try:
             data = json.loads(next_match.group(1))
-            if debug:
+            if verbose:
                 page_props = data.get("props", {}).get("pageProps", {})
                 console.print(
-                    f"[dim]__NEXT_DATA__ pageProps keys: {list(page_props.keys())}[/dim]"
+                    f"  __NEXT_DATA__ pageProps keys: {list(page_props.keys())}"
                 )
                 console.print(
-                    f"[dim]__NEXT_DATA__ (前 3000 字符):[/dim]\n"
-                    f"{json.dumps(data, ensure_ascii=False)[:3000]}"
+                    f"  __NEXT_DATA__ (前 2000 字符):\n"
+                    f"  {json.dumps(data, ensure_ascii=False)[:2000]}"
                 )
             result = _find_likes_in_obj(data)
             if result is not None:
-                return result
+                return result, ""
         except (json.JSONDecodeError, KeyError, TypeError) as e:
-            if debug:
-                console.print(f"[yellow]__NEXT_DATA__ 解析失败: {e}[/yellow]")
+            if verbose:
+                console.print(f"  __NEXT_DATA__ 解析失败: {e}")
 
     # 备用：HTML 正则
     for pattern in [
@@ -170,41 +183,30 @@ async def _try_html_scrape(
     ]:
         m = re.search(pattern, html, re.IGNORECASE)
         if m:
-            return int(m.group(1))
+            return int(m.group(1)), ""
 
-    if debug:
-        console.print(
-            f"[yellow]未找到点赞数据，页面片段（前 3000 字符）:[/yellow]\n{html[:3000]}"
-        )
-    return None
+    if verbose:
+        console.print(f"  页面前 2000 字符:\n  {html[:2000]}")
+
+    return None, "no_likes_field"
 
 
 async def fetch_likes(
     client: httpx.AsyncClient,
     arxiv_id: str,
-    debug: bool = False,
+    verbose: bool = False,
     delay: float = 0.0,
-) -> Optional[int]:
-    """获取 alphaxiv 点赞数：先试 REST API，再试 HTML 爬取。"""
+) -> tuple[Optional[int], str]:
+    """返回 (likes, error_reason)，error_reason 为空字符串表示成功。"""
     if delay:
         await asyncio.sleep(delay)
-    try:
-        # 策略 1：直接 REST API（快速、无需解析 HTML）
-        result = await _try_rest_api(client, arxiv_id, debug)
-        if result is not None:
-            return result
 
-        # 策略 2：HTML 页面爬取
-        return await _try_html_scrape(client, arxiv_id, debug)
+    likes, reason = await _try_rest_api(client, arxiv_id, verbose)
+    if likes is not None:
+        return likes, ""
 
-    except httpx.TimeoutException:
-        if debug:
-            console.print(f"[red]{arxiv_id}: 请求超时[/red]")
-        return None
-    except Exception as e:
-        if debug:
-            console.print(f"[red]{arxiv_id}: {e}[/red]")
-        return None
+    likes, reason = await _try_html_scrape(client, arxiv_id, verbose)
+    return likes, reason
 
 
 async def run(args):
@@ -216,16 +218,43 @@ async def run(args):
         console.print("[red]未找到 arxiv ID，请检查输入文件格式[/red]")
         sys.exit(1)
 
-    semaphore = asyncio.Semaphore(args.concurrency)
+    # --test 模式：只跑前 N 篇，全程 verbose，帮助诊断
+    if args.test:
+        test_papers = papers[: args.test]
+        console.print(
+            f"[yellow]--test 模式：只处理前 {len(test_papers)} 篇，输出详细日志[/yellow]"
+        )
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        async with httpx.AsyncClient(headers=headers) as client:
+            for p in test_papers:
+                console.rule(f"[cyan]{p['arxiv_id']}[/cyan]")
+                likes, reason = await fetch_likes(client, p["arxiv_id"], verbose=True)
+                if likes is not None:
+                    console.print(f"[green]✓ likes = {likes}[/green]")
+                else:
+                    console.print(f"[red]✗ 失败原因: {reason}[/red]")
+        return
 
-    async def fetch_one(client, paper, is_first):
+    semaphore = asyncio.Semaphore(args.concurrency)
+    error_counter: Counter = Counter()
+
+    async def fetch_one(client, paper):
         async with semaphore:
-            likes = await fetch_likes(
+            likes, reason = await fetch_likes(
                 client,
                 paper["arxiv_id"],
-                debug=(args.debug and is_first),
+                verbose=False,
                 delay=args.delay,
             )
+            if likes is None:
+                error_counter[reason or "unknown"] += 1
             return {**paper, "likes": likes}
 
     headers = {
@@ -247,7 +276,7 @@ async def run(args):
             console=console,
         ) as progress:
             task_id = progress.add_task("查询 alphaxiv...", total=len(papers))
-            coros = [fetch_one(client, p, i == 0) for i, p in enumerate(papers)]
+            coros = [fetch_one(client, p) for p in papers]
             for coro in asyncio.as_completed(coros):
                 result = await coro
                 results.append(result)
@@ -285,7 +314,16 @@ async def run(args):
         f"，{len(no_data)} 篇无数据[/dim]"
     )
 
-    if args.output:
+    # 如果全部失败，显示错误分布帮助诊断
+    if no_data and not with_likes:
+        console.print("[bold red]所有请求均失败，错误分布：[/bold red]")
+        for reason, count in error_counter.most_common():
+            console.print(f"  {reason}: {count} 篇")
+        console.print(
+            "[yellow]提示：运行 --test 3 查看详细请求日志，诊断具体原因[/yellow]"
+        )
+
+    if args.output and with_likes:
         all_sorted = sorted(with_likes, key=lambda x: x["likes"], reverse=True)
         with open(args.output, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
@@ -333,9 +371,11 @@ def main():
         help="结果保存为 CSV 文件（默认：<输入文件名>_likes.csv）",
     )
     parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="打印第一篇论文的 alphaxiv 原始数据，用于调试选择器",
+        "--test",
+        type=int,
+        metavar="N",
+        default=0,
+        help="诊断模式：只处理前 N 篇并打印详细请求日志（如 --test 3）",
     )
     args = parser.parse_args()
     if args.output is None:
