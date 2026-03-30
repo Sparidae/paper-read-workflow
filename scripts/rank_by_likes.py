@@ -2,11 +2,13 @@
 """
 从论文推荐列表中提取 arxiv ID，查询 alphaxiv 点赞量，筛选高价值论文。
 
+输入文件和输出结果统一放在 scripts/data/ 目录（已加入 .gitignore）。
+
 用法:
-    uv run python scripts/rank_by_likes.py scripts/.test_list
-    uv run python scripts/rank_by_likes.py scripts/.test_list --min-likes 5 --top 30
-    uv run python scripts/rank_by_likes.py scripts/.test_list --output results.csv
-    uv run python scripts/rank_by_likes.py scripts/.test_list --debug  # 打印首篇原始数据用于调试选择器
+    uv run python scripts/rank_by_likes.py scripts/data/my_list.md
+    uv run python scripts/rank_by_likes.py scripts/data/my_list.md --min-likes 5 --top 30
+    uv run python scripts/rank_by_likes.py scripts/data/my_list.md --output scripts/data/out.csv
+    uv run python scripts/rank_by_likes.py scripts/data/my_list.md --debug
 """
 
 import argparse
