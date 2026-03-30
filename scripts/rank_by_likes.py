@@ -44,9 +44,18 @@ NEXT_DATA_RE = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.
 TITLE_RE = re.compile(r"\*\*\[([^\]]+)\]")
 
 ALPHAXIV_BASE = "https://alphaxiv.org/abs"
+ALPHAXIV_API_BASE = "https://api.alphaxiv.org"
 
 # alphaxiv JSON 中点赞数的候选字段名
 LIKES_KEYS = ("likes", "likeCount", "like_count", "upvotes", "voteCount", "vote_count")
+
+# 尝试的 REST API 路径（按优先级）
+API_PATHS = [
+    "/papers/{id}",
+    "/v1/papers/{id}",
+    "/api/papers/{id}",
+    "/v2/papers/{id}",
+]
 
 
 def extract_papers(text: str) -> list[dict]:
@@ -88,65 +97,103 @@ def _find_likes_in_obj(obj, depth=0) -> Optional[int]:
     return None
 
 
+async def _try_rest_api(
+    client: httpx.AsyncClient, arxiv_id: str, debug: bool
+) -> Optional[int]:
+    """尝试直接调用 alphaxiv REST API 获取点赞数。"""
+    for path in API_PATHS:
+        url = ALPHAXIV_API_BASE + path.format(id=arxiv_id)
+        try:
+            resp = await client.get(url, timeout=10)
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                    result = _find_likes_in_obj(data)
+                    if debug:
+                        console.print(f"[green]REST API 命中: {url}[/green]")
+                        console.print(
+                            f"[dim]响应: {json.dumps(data, ensure_ascii=False)[:2000]}[/dim]"
+                        )
+                    if result is not None:
+                        return result
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    return None
+
+
+async def _try_html_scrape(
+    client: httpx.AsyncClient, arxiv_id: str, debug: bool
+) -> Optional[int]:
+    """爬取 alphaxiv 页面，从 __NEXT_DATA__ 或 HTML 提取点赞数。"""
+    url = f"{ALPHAXIV_BASE}/{arxiv_id}"
+    resp = await client.get(url, follow_redirects=True, timeout=20)
+    if resp.status_code != 200:
+        if debug:
+            console.print(f"[red]{arxiv_id}: HTML 页面 HTTP {resp.status_code}[/red]")
+        return None
+
+    html = resp.text
+
+    # 优先从 Next.js __NEXT_DATA__ 中解析
+    next_match = NEXT_DATA_RE.search(html)
+    if next_match:
+        try:
+            data = json.loads(next_match.group(1))
+            if debug:
+                page_props = data.get("props", {}).get("pageProps", {})
+                console.print(
+                    f"[dim]__NEXT_DATA__ pageProps keys: {list(page_props.keys())}[/dim]"
+                )
+                console.print(
+                    f"[dim]__NEXT_DATA__ (前 3000 字符):[/dim]\n"
+                    f"{json.dumps(data, ensure_ascii=False)[:3000]}"
+                )
+            result = _find_likes_in_obj(data)
+            if result is not None:
+                return result
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            if debug:
+                console.print(f"[yellow]__NEXT_DATA__ 解析失败: {e}[/yellow]")
+
+    # 备用：HTML 正则
+    for pattern in [
+        r'"likes"\s*:\s*(\d+)',
+        r'"likeCount"\s*:\s*(\d+)',
+        r'"like_count"\s*:\s*(\d+)',
+        r'"upvotes"\s*:\s*(\d+)',
+        r'data-likes="(\d+)"',
+        r'aria-label="(\d+)\s*like',
+    ]:
+        m = re.search(pattern, html, re.IGNORECASE)
+        if m:
+            return int(m.group(1))
+
+    if debug:
+        console.print(
+            f"[yellow]未找到点赞数据，页面片段（前 3000 字符）:[/yellow]\n{html[:3000]}"
+        )
+    return None
+
+
 async def fetch_likes(
     client: httpx.AsyncClient,
     arxiv_id: str,
     debug: bool = False,
     delay: float = 0.0,
 ) -> Optional[int]:
-    """从 alphaxiv 页面获取点赞数。"""
+    """获取 alphaxiv 点赞数：先试 REST API，再试 HTML 爬取。"""
     if delay:
         await asyncio.sleep(delay)
-
-    url = f"{ALPHAXIV_BASE}/{arxiv_id}"
     try:
-        resp = await client.get(url, follow_redirects=True, timeout=20)
-        if resp.status_code != 200:
-            if debug:
-                console.print(f"[red]{arxiv_id}: HTTP {resp.status_code}[/red]")
-            return None
+        # 策略 1：直接 REST API（快速、无需解析 HTML）
+        result = await _try_rest_api(client, arxiv_id, debug)
+        if result is not None:
+            return result
 
-        html = resp.text
-
-        # 优先从 Next.js __NEXT_DATA__ 中解析（最可靠）
-        next_match = NEXT_DATA_RE.search(html)
-        if next_match:
-            try:
-                data = json.loads(next_match.group(1))
-                if debug:
-                    page_props = data.get("props", {}).get("pageProps", {})
-                    console.print(
-                        f"[dim]__NEXT_DATA__ pageProps keys: {list(page_props.keys())}[/dim]"
-                    )
-                    console.print(
-                        f"[dim]Full __NEXT_DATA__ (truncated):[/dim]\n"
-                        f"{json.dumps(data, ensure_ascii=False)[:3000]}"
-                    )
-                result = _find_likes_in_obj(data)
-                if result is not None:
-                    return result
-            except (json.JSONDecodeError, KeyError, TypeError) as e:
-                if debug:
-                    console.print(f"[yellow]__NEXT_DATA__ parse error: {e}[/yellow]")
-
-        # 备用：在 HTML 中用正则搜索常见字段
-        for pattern in [
-            r'"likes"\s*:\s*(\d+)',
-            r'"likeCount"\s*:\s*(\d+)',
-            r'"like_count"\s*:\s*(\d+)',
-            r'"upvotes"\s*:\s*(\d+)',
-            r'data-likes="(\d+)"',
-            r'aria-label="(\d+)\s*like',
-        ]:
-            m = re.search(pattern, html, re.IGNORECASE)
-            if m:
-                return int(m.group(1))
-
-        if debug:
-            console.print(
-                f"[yellow]未找到点赞数据，页面片段（前 3000 字符）:[/yellow]\n{html[:3000]}"
-            )
-        return None
+        # 策略 2：HTML 页面爬取
+        return await _try_html_scrape(client, arxiv_id, debug)
 
     except httpx.TimeoutException:
         if debug:
