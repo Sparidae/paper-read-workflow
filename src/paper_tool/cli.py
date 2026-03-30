@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import typer
@@ -9,6 +10,41 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.text import Text
+
+_URL_RE = re.compile(r"https?://[^\s,\"'\]>]+")
+_SUPPORTED_DOMAINS = frozenset(
+    [
+        "arxiv.org",
+        "alphaxiv.org",
+        "ar5iv.labs.google.com",
+        "openreview.net",
+        "huggingface.co",
+    ]
+)
+
+
+def _extract_urls(text: str) -> list[str]:
+    """从任意文本中提取去重后的支持域名论文链接。"""
+
+    def _is_supported(url: str) -> bool:
+        lower = url.lower()
+        return any(d in lower for d in _SUPPORTED_DOMAINS)
+
+    def _normalize(url: str) -> str:
+        return url.replace("alphaxiv.org", "arxiv.org").rstrip("/")
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for raw in _URL_RE.findall(text):
+        url = raw.rstrip(".,;)>")
+        if not _is_supported(url):
+            continue
+        key = _normalize(url)
+        if key not in seen:
+            seen.add(key)
+            result.append(key)
+    return result
+
 
 app = typer.Typer(
     name="paper-tool",
@@ -168,7 +204,9 @@ def add(
 
 @app.command()
 def batch(
-    file: Path = typer.Argument(..., help="包含论文链接的文本文件，每行一个 URL"),
+    file: Path = typer.Argument(
+        ..., help="包含论文链接的文件（支持 txt/csv/md 等任意格式，自动提取链接）"
+    ),
     skip_llm: bool = typer.Option(False, "--skip-llm", help="跳过 LLM 分析"),
     continue_on_error: bool = typer.Option(
         True, "--continue-on-error/--stop-on-error", help="遇到错误时是否继续处理下一篇"
@@ -185,16 +223,12 @@ def batch(
         help="若 Notion 中已存在同 URL 论文，二次确认后归档旧页面并重新导入",
     ),
 ) -> None:
-    """批量添加论文（从文件读取 URL 列表，每行一个）。"""
+    """批量添加论文（自动从文件中提取论文链接，支持 txt/csv/md 等任意格式）。"""
     if not file.exists():
         error_console.print(f"[ERROR] 文件不存在: {file}")
         raise typer.Exit(code=1)
 
-    urls = [
-        line.strip()
-        for line in file.read_text().splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
+    urls = _extract_urls(file.read_text())
 
     if not urls:
         console.print("[yellow]文件中没有找到有效的 URL[/yellow]")
