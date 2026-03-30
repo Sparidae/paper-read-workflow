@@ -5,15 +5,13 @@ from __future__ import annotations
 import re
 import tarfile
 import time
-from pathlib import Path
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 import httpx
 
 from paper_tool.downloaders.base import BaseDownloader
 from paper_tool.models import PaperMetadata, PaperSource
 from paper_tool.retry import retry as _retry
-
 
 _ARXIV_ID_RE = re.compile(r"[0-9]{4}\.[0-9]{4,5}(?:v\d+)?")
 
@@ -65,30 +63,70 @@ class ArxivDownloader(BaseDownloader):
 
     @_retry(max_attempts=3, base_delay=2.0)
     def fetch_metadata(self, url: str) -> PaperMetadata:
-        import arxiv
+        from datetime import date
+        from html.parser import HTMLParser
 
         paper_id = _extract_arxiv_id(url)
         base_id = re.sub(r"v\d+$", "", paper_id)
 
-        client = arxiv.Client()
-        search = arxiv.Search(id_list=[base_id])
-        results = list(client.results(search))
+        abs_url = f"https://arxiv.org/abs/{base_id}"
+        headers = {"User-Agent": "paper-tool/0.1"}
 
-        if not results:
-            raise ValueError(f"No Arxiv paper found for ID: {base_id!r}")
+        with httpx.Client(follow_redirects=True, timeout=30) as client:
+            response = client.get(abs_url, headers=headers)
+            response.raise_for_status()
 
-        result = results[0]
+        html = response.text
 
-        tags = [cat for cat in result.categories]
+        class _MetaParser(HTMLParser):
+            def __init__(self) -> None:
+                super().__init__()
+                self.meta: dict[str, list[str]] = {}
+
+            def handle_starttag(self, tag: str, attrs: list) -> None:
+                if tag == "meta":
+                    d = dict(attrs)
+                    name = d.get("name", "")
+                    if name.startswith("citation_"):
+                        self.meta.setdefault(name, []).append(d.get("content", ""))
+
+        parser = _MetaParser()
+        parser.feed(html)
+        m = parser.meta
+
+        title = (m.get("citation_title") or [""])[0].strip()
+        if not title:
+            raise ValueError(f"Could not parse title from {abs_url}")
+
+        authors = m.get("citation_author") or []
+        abstract = (m.get("citation_abstract") or [""])[0].strip().replace("\n", " ")
+
+        published_date: date | None = None
+        raw_date = (m.get("citation_date") or [""])[0]
+        if raw_date:
+            try:
+                published_date = date.fromisoformat(raw_date.replace("/", "-"))
+            except ValueError:
+                pass
+
+        # Extract category IDs like "cs.CV" from subjects cell
+        subjects_match = re.search(
+            r'class="tablecell subjects">(.*?)</td>', html, re.DOTALL
+        )
+        tags: list[str] = []
+        if subjects_match:
+            tags = re.findall(r"\(([a-z\-]+\.[A-Z]+)\)", subjects_match.group(1))
+
+        canonical_url = f"https://arxiv.org/abs/{base_id}"
 
         return PaperMetadata(
-            title=result.title.strip(),
-            authors=[str(a) for a in result.authors],
-            abstract=result.summary.strip().replace("\n", " "),
+            title=title,
+            authors=authors,
+            abstract=abstract,
             source=PaperSource.ARXIV,
-            url=result.entry_id,
+            url=canonical_url,
             paper_id=base_id,
-            published_date=result.published.date() if result.published else None,
+            published_date=published_date,
             tags=tags,
         )
 
@@ -117,11 +155,13 @@ class ArxivDownloader(BaseDownloader):
                         raise RuntimeError(
                             f"Failed to download PDF from {pdf_url}: {e}"
                         ) from e
-                    time.sleep(2 ** attempt)
+                    time.sleep(2**attempt)
 
         return dest_path
 
-    def download_latex_source(self, metadata: PaperMetadata, dest_dir: Path) -> Path | None:
+    def download_latex_source(
+        self, metadata: PaperMetadata, dest_dir: Path
+    ) -> Path | None:
         """
         Download and extract the LaTeX source from Arxiv.
         Returns the path to a merged .tex file, or None if unavailable.
@@ -203,7 +243,10 @@ class ArxivDownloader(BaseDownloader):
                                 except Exception:
                                     pass
 
-                            elif suffix in _IMG_SUFFIXES and member.size <= _MAX_IMG_BYTES:
+                            elif (
+                                suffix in _IMG_SUFFIXES
+                                and member.size <= _MAX_IMG_BYTES
+                            ):
                                 # Flatten: save only the filename, drop subdirectory path
                                 fname = Path(member.name).name
                                 out_path = figures_dir / fname
