@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass
@@ -19,7 +19,9 @@ class CompletionResult:
 class StreamWindow:
     """A small fixed-height live panel for token streaming output."""
 
-    def __init__(self, title: str, *, height: int = 8, max_buffer_chars: int = 8000) -> None:
+    def __init__(
+        self, title: str, *, height: int = 8, max_buffer_chars: int = 8000
+    ) -> None:
         from rich.console import Console
         from rich.live import Live
         from rich.panel import Panel
@@ -72,7 +74,11 @@ class StreamWindow:
     def refresh(self) -> None:
         if self._live is None:
             return
-        shown = self._buffer[-self._max_buffer_chars :] if self._buffer else "等待模型输出..."
+        shown = (
+            self._buffer[-self._max_buffer_chars :]
+            if self._buffer
+            else "等待模型输出..."
+        )
         self._live.update(self._renderable(shown))
 
     def _renderable(self, content: str):
@@ -143,17 +149,64 @@ def _extract_delta_text(choice_delta: Any) -> str:
 def completion_to_text(
     *,
     request_kwargs: dict[str, Any],
-    stream: bool,
-    stream_title: str,
+    stream: bool = False,
+    stream_title: str = "",
     stream_height: int = 8,
+    on_token: Callable[[str], None] | None = None,
 ) -> CompletionResult:
     """
     Run litellm completion and normalize text extraction.
 
-    In stream mode, tokens are rendered in a fixed-height Rich live panel.
+    Three modes:
+    - on_token provided  → stream from litellm, deliver each token via on_token callback,
+                           no StreamWindow (used by pipeline.py for web/headless callers)
+    - stream=True        → stream from litellm into a Rich StreamWindow (CLI use)
+    - stream=False       → non-streaming litellm call
     """
     import litellm
 
+    # ── Mode 1: callback-based streaming (no terminal UI) ─────────────────────
+    if on_token is not None:
+        stream_kwargs = dict(request_kwargs)
+        stream_kwargs["stream"] = True
+
+        all_parts: list[str] = []
+        content_parts: list[str] = []  # non-reasoning content only
+        finish_reason: str | None = None
+
+        for chunk in litellm.completion(**stream_kwargs):
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+            choice = choices[0]
+            delta = getattr(choice, "delta", None)
+            piece = _extract_delta_text(delta)
+            if piece:
+                all_parts.append(piece)
+                on_token(piece)
+            # Track actual content separately (excludes reasoning_content)
+            if delta is not None:
+                content_piece = _join_message_text(
+                    getattr(delta, "content", None)
+                    if not isinstance(delta, dict)
+                    else delta.get("content")
+                )
+                if content_piece:
+                    content_parts.append(content_piece)
+            fr = getattr(choice, "finish_reason", None)
+            if fr:
+                finish_reason = fr
+
+        # Use content-only text for callers that parse structured output (e.g. JSON).
+        # Fall back to all_parts if no explicit content (non-thinking models).
+        result_text = "".join(content_parts).strip() or "".join(all_parts).strip()
+        return CompletionResult(
+            text=result_text,
+            finish_reason=finish_reason,
+            usage=None,
+        )
+
+    # ── Mode 2: non-streaming ──────────────────────────────────────────────────
     if not stream:
         response = litellm.completion(**request_kwargs)
         choice = response.choices[0]
@@ -164,11 +217,12 @@ def completion_to_text(
             usage=getattr(response, "usage", None),
         )
 
+    # ── Mode 3: StreamWindow (CLI) ─────────────────────────────────────────────
     stream_kwargs = dict(request_kwargs)
     stream_kwargs["stream"] = True
 
-    parts: list[str] = []
-    finish_reason: str | None = None
+    parts = []
+    finish_reason = None
 
     with StreamWindow(stream_title, height=stream_height) as window:
         for chunk in litellm.completion(**stream_kwargs):

@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from paper_tool.config import get_config
 from paper_tool.llm_stream import completion_to_text
 from paper_tool.models import FigureInfo, PaperMetadata, PaperNote
-from paper_tool.retry import retry as _retry, with_retry as _with_retry
+from paper_tool.retry import retry as _retry
+from paper_tool.retry import with_retry as _with_retry
 
 if TYPE_CHECKING:
     pass
@@ -72,7 +73,11 @@ def _parse_response(raw: str) -> PaperNote:
 
     def _lst(key: str) -> list[str]:
         val = data.get(key, [])
-        return [str(v) for v in val] if isinstance(val, list) else ([str(val)] if val else [])
+        return (
+            [str(v) for v in val]
+            if isinstance(val, list)
+            else ([str(val)] if val else [])
+        )
 
     return PaperNote(
         overview=str(data.get("overview", "")),
@@ -92,6 +97,7 @@ def _llm_call(
     max_tokens: int | None = None,
     stream: bool = False,
     stream_title: str = "LLM 流式输出",
+    on_token: Callable[[str], None] | None = None,
 ) -> str:
     """Single LLM call, returns raw response text. Raises on empty response."""
     cfg = get_config()
@@ -106,11 +112,13 @@ def _llm_call(
     }
     if cfg.openai_base_url:
         kwargs["api_base"] = cfg.openai_base_url
+    stream_enabled = (stream or cfg.llm_stream_window) and on_token is None
     result = completion_to_text(
         request_kwargs=kwargs,
-        stream=stream or cfg.llm_stream_window,
+        stream=stream_enabled,
         stream_title=stream_title,
         stream_height=cfg.llm_stream_window_height,
+        on_token=on_token,
     )
     raw = result.text
 
@@ -133,6 +141,7 @@ def translate_captions(
     *,
     stream: bool = False,
     stream_title: str = "LLM 流式输出 · 图注翻译",
+    on_token: Callable[[str], None] | None = None,
 ) -> list[FigureInfo]:
     """
     Translate figure captions to Chinese using a single LLM call.
@@ -163,6 +172,7 @@ def translate_captions(
         user,
         stream=stream,
         stream_title=stream_title,
+        on_token=on_token,
     )
     translated: list[str] = json.loads(_strip_json_fence(raw))
     if not isinstance(translated, list) or len(translated) != len(to_translate):
@@ -216,6 +226,7 @@ class LLMAnalyzer:
         figures: list[FigureInfo] | None = None,
         tables: list[FigureInfo] | None = None,
         stream: bool = False,
+        on_token: Callable[[str], None] | None = None,
     ) -> PaperNote:
         """
         Generate reading notes. Does NOT perform classification.
@@ -227,6 +238,7 @@ class LLMAnalyzer:
         augmented with instructions to place [FIGURE:N] markers in the output.
         """
         import traceback
+
         def _dbg(label: str, content: str = "") -> None:
             if not debug:
                 return
@@ -237,7 +249,9 @@ class LLMAnalyzer:
             print(content or "(empty)", flush=True)
 
         reserved = 2000
-        truncated = self._truncate(paper_text, self._cfg.llm_max_input_tokens - reserved)
+        truncated = self._truncate(
+            paper_text, self._cfg.llm_max_input_tokens - reserved
+        )
         system_prompt = self._cfg.analyzer_prompt or _SYSTEM_PROMPT
 
         if self._cfg.llm_note_format == "freeform":
@@ -266,7 +280,7 @@ class LLMAnalyzer:
             user_prompt[:1000],
         )
 
-        stream_enabled = stream or self._cfg.llm_stream_window
+        stream_enabled = (stream or self._cfg.llm_stream_window) and on_token is None
         kwargs: dict = {
             "model": self._cfg.llm_model,
             "messages": [
@@ -286,6 +300,7 @@ class LLMAnalyzer:
                     stream=stream_enabled,
                     stream_title="LLM 流式输出 · 笔记",
                     stream_height=self._cfg.llm_stream_window_height,
+                    on_token=on_token,
                 ),
                 max_attempts=3,
                 base_delay=3.0,
@@ -299,11 +314,14 @@ class LLMAnalyzer:
         raw = response.text
 
         if debug:
-            finish_reason = response.finish_reason or ("stream" if stream_enabled else "unknown")
+            finish_reason = response.finish_reason or (
+                "stream" if stream_enabled else "unknown"
+            )
             usage = response.usage
             usage_str = (
                 f"prompt={usage.prompt_tokens} completion={usage.completion_tokens} total={usage.total_tokens}"
-                if usage else "N/A"
+                if usage
+                else "N/A"
             )
             _dbg(
                 f"Response Meta  finish_reason={finish_reason}  usage={usage_str}",

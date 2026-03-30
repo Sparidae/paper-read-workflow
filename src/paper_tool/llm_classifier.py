@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Callable
 
 from paper_tool.config import get_config
 from paper_tool.llm_stream import completion_to_text
 from paper_tool.models import Classification, PaperMetadata
 from paper_tool.retry import with_retry as _with_retry
-
 
 _SYSTEM_PROMPT_TEMPLATE = """你是一位学术论文分类助手，负责为论文打标签。
 
@@ -54,12 +54,15 @@ _SYSTEM_PROMPT_TEMPLATE = """你是一位学术论文分类助手，负责为论
 不要输出任何 JSON 以外的内容。"""
 
 
-def _build_system_prompt(options: dict[str, list[str]], template: str | None = None) -> str:
+def _build_system_prompt(
+    options: dict[str, list[str]], template: str | None = None
+) -> str:
     """
     Build classifier system prompt.
     Uses provided template (from prompts/classifier.md) or falls back to the built-in template.
     The options list is appended as a separate block so the prompt file stays static.
     """
+
     def _fmt(opts: list[str]) -> str:
         return "、".join(f'"{o}"' for o in opts) if opts else "（暂无）"
 
@@ -88,9 +91,7 @@ def _build_user_prompt(metadata: PaperMetadata) -> str:
 **摘要**: {metadata.abstract}"""
 
 
-def _parse_response(
-    raw: str, available: dict[str, list[str]]
-) -> Classification:
+def _parse_response(raw: str, available: dict[str, list[str]]) -> Classification:
     cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip())
     cleaned = re.sub(r"\s*```$", "", cleaned)
 
@@ -145,6 +146,7 @@ class LLMClassifier:
         available_options: dict[str, list[str]],
         debug: bool = False,
         stream: bool = False,
+        on_token: "Callable[[str], None] | None" = None,
     ) -> Classification:
         """
         Classify paper using only metadata (title, abstract, authors).
@@ -153,6 +155,7 @@ class LLMClassifier:
         available_options: {"paper_type": [...], "research_areas": [...], "institutions": [...]}
         """
         import traceback
+
         def _dbg(label: str, content: str = "") -> None:
             if not debug:
                 return
@@ -184,11 +187,13 @@ class LLMClassifier:
         messages: list[dict] = kwargs.pop("messages")
         max_attempts = 3
         last_exc: Exception = RuntimeError("unreachable")
-        stream_enabled = stream or self._cfg.llm_stream_window
+        stream_enabled = (stream or self._cfg.llm_stream_window) and on_token is None
 
         for attempt in range(max_attempts):
             if attempt > 0:
-                _dbg(f"Retry {attempt}/{max_attempts - 1} — feeding parse error back to model")
+                _dbg(
+                    f"Retry {attempt}/{max_attempts - 1} — feeding parse error back to model"
+                )
 
             try:
                 response = _with_retry(
@@ -197,6 +202,7 @@ class LLMClassifier:
                         stream=stream_enabled,
                         stream_title=f"LLM 流式输出 · 分类 (attempt {attempt + 1})",
                         stream_height=self._cfg.llm_stream_window_height,
+                        on_token=on_token,
                     ),
                     max_attempts=3,
                     base_delay=3.0,
@@ -210,13 +216,18 @@ class LLMClassifier:
             raw = response.text
 
             if debug:
-                finish_reason = response.finish_reason or ("stream" if stream_enabled else "unknown")
+                finish_reason = response.finish_reason or (
+                    "stream" if stream_enabled else "unknown"
+                )
                 usage = response.usage
                 usage_str = (
                     f"prompt={usage.prompt_tokens} completion={usage.completion_tokens} total={usage.total_tokens}"
-                    if usage else "N/A"
+                    if usage
+                    else "N/A"
                 )
-                _dbg(f"Response Meta  attempt={attempt}  finish_reason={finish_reason}  usage={usage_str}")
+                _dbg(
+                    f"Response Meta  attempt={attempt}  finish_reason={finish_reason}  usage={usage_str}"
+                )
                 _dbg(f"Raw Response ({len(raw)} chars)", raw)
 
             try:
