@@ -326,7 +326,8 @@
       }
 
       case 'llm_end': {
-        // Keep panel visible; title stays as-is
+        // Expand box to show full content without scrollbar
+        llmOutput.style.height = llmOutput.scrollHeight + 'px';
         break;
       }
 
@@ -402,7 +403,7 @@
     urlInput.disabled = true;
     submitBtn.disabled = true;
     submitBtn.style.display = 'none';
-    stopBtn.style.display = '';
+    stopBtn.style.display = 'inline-block';
 
     ws.send(JSON.stringify({ action: 'add', url }));
   }
