@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import time
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 
@@ -32,6 +32,7 @@ class OpenReviewDownloader(BaseDownloader):
 
     def _get_client(self) -> "openreview.api.OpenReviewClient":
         import openreview
+
         from paper_tool.config import get_config
 
         cfg = get_config()
@@ -70,10 +71,12 @@ class OpenReviewDownloader(BaseDownloader):
 
         # Try to get publication date from tcdate
         from datetime import date
+
         pub_date: date | None = None
         if hasattr(note, "tcdate") and note.tcdate:
             try:
                 from datetime import datetime
+
                 pub_date = datetime.fromtimestamp(note.tcdate / 1000).date()
             except Exception:
                 pass
@@ -120,6 +123,6 @@ class OpenReviewDownloader(BaseDownloader):
                         raise RuntimeError(
                             f"Failed to download PDF from {pdf_url}: {e}"
                         ) from e
-                    time.sleep(2 ** attempt)
+                    time.sleep(2**attempt)
 
         return dest_path

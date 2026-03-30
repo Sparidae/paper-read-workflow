@@ -1,7 +1,7 @@
 """Paper downloaders for Arxiv and OpenReview."""
 
-from paper_tool.downloaders.base import BaseDownloader
 from paper_tool.downloaders.arxiv import ArxivDownloader
+from paper_tool.downloaders.base import BaseDownloader
 from paper_tool.downloaders.openreview import OpenReviewDownloader
 
 __all__ = ["BaseDownloader", "ArxivDownloader", "OpenReviewDownloader"]

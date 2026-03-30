@@ -18,7 +18,6 @@ from pathlib import Path
 
 from paper_tool.models import FigureInfo
 
-
 _MAX_FILE_BYTES = 18 * 1024 * 1024
 
 # Matches \begin{table} ... \end{table} (including table*)
@@ -71,6 +70,7 @@ _LATEX_TEMPLATE = r"""\documentclass[border=6pt]{standalone}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _extract_renewcommand_stubs(tex: str) -> str:
     r"""Create ``\providecommand`` stubs for commands redefined in the preamble.
 
@@ -78,9 +78,7 @@ def _extract_renewcommand_stubs(tex: str) -> str:
     defined by a style package not loaded in our standalone template.
     """
     preamble = tex.split(r"\begin{document}", 1)[0]
-    commands = sorted(set(
-        re.findall(r"\\renewcommand\{(\\[A-Za-z@]+)\}", preamble)
-    ))
+    commands = sorted(set(re.findall(r"\\renewcommand\{(\\[A-Za-z@]+)\}", preamble)))
     return "\n".join(f"\\providecommand{{{cmd}}}{{}}" for cmd in commands)
 
 
@@ -88,7 +86,9 @@ def _probe_textwidth(tex: str) -> str | None:
     r"""Compile a minimal probe document to measure actual ``\textwidth``."""
     if shutil.which("pdflatex") is None:
         return None
-    preamble = tex.split(r"\begin{document}", 1)[0] if r"\begin{document}" in tex else ""
+    preamble = (
+        tex.split(r"\begin{document}", 1)[0] if r"\begin{document}" in tex else ""
+    )
     dc_match = re.search(r"\\documentclass(?:\[[^\]]*\])?\{[^}]+\}", preamble)
     if not dc_match:
         return None
@@ -116,7 +116,9 @@ def _probe_textwidth(tex: str) -> str | None:
             tex_file.write_text(probe_src, encoding="utf-8")
             result = subprocess.run(
                 ["pdflatex", "-interaction=nonstopmode", "-draftmode", "probe.tex"],
-                cwd=tmpdir, capture_output=True, timeout=15,
+                cwd=tmpdir,
+                capture_output=True,
+                timeout=15,
             )
             stdout = result.stdout.decode("utf-8", errors="replace")
             tw_m = re.search(r"PROBED_TEXTWIDTH=([\d.]+)pt", stdout)
@@ -131,7 +133,9 @@ def _probe_textwidth(tex: str) -> str | None:
 
 def _estimate_textwidth(tex: str) -> str:
     r"""Heuristic estimation of ``\textwidth``."""
-    preamble = tex.split(r"\begin{document}", 1)[0] if r"\begin{document}" in tex else ""
+    preamble = (
+        tex.split(r"\begin{document}", 1)[0] if r"\begin{document}" in tex else ""
+    )
     if not preamble:
         return "6.50in"
 
@@ -142,10 +146,15 @@ def _estimate_textwidth(tex: str) -> str:
             return tw.group(1).replace(" ", "")
 
     style_widths = {
-        "neurips": "5.50in", "nips": "5.50in",
-        "iclr": "5.50in", "icml": "6.75in",
-        "acl": "6.30in", "emnlp": "6.30in", "naacl": "6.30in",
-        "aaai": "7.00in", "jmlr": "6.00in",
+        "neurips": "5.50in",
+        "nips": "5.50in",
+        "iclr": "5.50in",
+        "icml": "6.75in",
+        "acl": "6.30in",
+        "emnlp": "6.30in",
+        "naacl": "6.30in",
+        "aaai": "7.00in",
+        "jmlr": "6.00in",
     }
     for pkg, width in style_widths.items():
         if re.search(rf"\\usepackage(?:\[[^\]]*\])?\{{{pkg}", preamble):
@@ -225,8 +234,14 @@ def _extract_preamble_macros(tex: str) -> str:
     """
     preamble = tex.split(r"\begin{document}", 1)[0]
     starters = (
-        r"\newcommand", r"\renewcommand", r"\def", r"\DeclareMathOperator",
-        r"\providecommand", r"\newcolumntype", r"\definecolor", r"\colorlet",
+        r"\newcommand",
+        r"\renewcommand",
+        r"\def",
+        r"\DeclareMathOperator",
+        r"\providecommand",
+        r"\newcolumntype",
+        r"\definecolor",
+        r"\colorlet",
         r"\let",
     )
     lines = preamble.splitlines()
@@ -332,6 +347,7 @@ def _read_status_renderer(debug_dir: Path, stem: str) -> str:
 
 # ── LaTeX rendering ───────────────────────────────────────────────────────────
 
+
 def _render_table_latex(
     table_body: str,
     output_path: Path,
@@ -350,12 +366,13 @@ def _render_table_latex(
     """
     if not shutil.which("pdflatex"):
         if debug_dir is not None:
-            _write_status(debug_dir, stem, renderer="latex_failed", note="pdflatex_not_found")
+            _write_status(
+                debug_dir, stem, renderer="latex_failed", note="pdflatex_not_found"
+            )
         return False
 
     tex_src = (
-        _LATEX_TEMPLATE
-        .replace("@@RENEW_STUBS@@", renew_stubs)
+        _LATEX_TEMPLATE.replace("@@RENEW_STUBS@@", renew_stubs)
         .replace("@@PREAMBLE_MACROS@@", preamble_macros)
         .replace("@@TABLE_BODY@@", table_body)
         .replace("@@TEXT_WIDTH@@", text_width)
@@ -394,7 +411,9 @@ def _render_table_latex(
                     )
                     if log_file.exists():
                         shutil.copy2(log_file, debug_dir / f"{stem}.latex.log")
-                    _write_status(debug_dir, stem, renderer="latex_failed", note="compile_error")
+                    _write_status(
+                        debug_dir, stem, renderer="latex_failed", note="compile_error"
+                    )
                 return False
 
             import fitz  # PyMuPDF
@@ -403,7 +422,9 @@ def _render_table_latex(
             if len(doc) == 0:
                 doc.close()
                 if debug_dir is not None:
-                    _write_status(debug_dir, stem, renderer="latex_failed", note="empty_pdf")
+                    _write_status(
+                        debug_dir, stem, renderer="latex_failed", note="empty_pdf"
+                    )
                 return False
 
             page = doc[0]
@@ -417,16 +438,28 @@ def _render_table_latex(
     except Exception:
         if debug_dir is not None:
             _write_text(debug_dir / f"{stem}.latex.tex", tex_src)
-            _write_status(debug_dir, stem, renderer="latex_failed", note="python_exception")
+            _write_status(
+                debug_dir, stem, renderer="latex_failed", note="python_exception"
+            )
         return False
 
 
 # ── matplotlib fallback ───────────────────────────────────────────────────────
 
+
 def _clean_cell(text: str) -> str:
     text = re.sub(r"\\multicolumn\{\d+\}\{[^}]*\}\{([^}]*)\}", r"\1", text)
     text = re.sub(r"\\multirow\{\d+\}\{[^}]*\}\{([^}]*)\}", r"\1", text)
-    for cmd in ("textbf", "textit", "underline", "emph", "textrm", "texttt", "textsc", "text"):
+    for cmd in (
+        "textbf",
+        "textit",
+        "underline",
+        "emph",
+        "textrm",
+        "texttt",
+        "textsc",
+        "text",
+    ):
         text = re.sub(rf"\\{cmd}\{{([^}}]*)\}}", r"\1", text)
     text = re.sub(r"\\[a-zA-Z]+\*?\{([^}]*)\}", r"\1", text)
     text = re.sub(r"\\[a-zA-Z]+\*?", "", text)
@@ -438,7 +471,8 @@ def _clean_cell(text: str) -> str:
 def _parse_tabular_rows(env_text: str) -> list[list[str]]:
     tab_m = re.search(
         r"\\begin\{(?:tabular|tabulary|tabularx)\*?\}(?:\{[^}]*\})?\{[^}]*\}(.*?)\\end\{(?:tabular|tabulary|tabularx)\*?\}",
-        env_text, re.DOTALL,
+        env_text,
+        re.DOTALL,
     )
     if not tab_m:
         return []
@@ -460,8 +494,8 @@ def _parse_tabular_rows(env_text: str) -> list[list[str]]:
 
 def _trim_whitespace(image_path: Path, padding: int = 12) -> None:
     try:
-        from PIL import Image
         import numpy as np
+        from PIL import Image
 
         img = Image.open(str(image_path)).convert("RGB")
         arr = np.array(img)
@@ -470,10 +504,10 @@ def _trim_whitespace(image_path: Path, padding: int = 12) -> None:
         cols = np.where(mask.any(axis=0))[0]
         if len(rows) == 0 or len(cols) == 0:
             return
-        top    = max(0,          rows[0]  - padding)
+        top = max(0, rows[0] - padding)
         bottom = min(img.height, rows[-1] + padding + 1)
-        left   = max(0,          cols[0]  - padding)
-        right  = min(img.width,  cols[-1] + padding + 1)
+        left = max(0, cols[0] - padding)
+        right = min(img.width, cols[-1] + padding + 1)
         img.crop((left, top, right, bottom)).save(str(image_path))
     except Exception:
         pass
@@ -488,9 +522,10 @@ def _render_table_matplotlib(
     """Fallback: render a parsed 2D table as a booktabs-style PNG with matplotlib."""
     try:
         import matplotlib
+
         matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
         import matplotlib.lines as mlines
+        import matplotlib.pyplot as plt
 
         if not rows:
             return False
@@ -524,31 +559,44 @@ def _render_table_matplotlib(
         all_bboxes = [cell.get_window_extent(renderer) for cell in cells_dict.values()]
         header_bboxes = [
             cell.get_window_extent(renderer)
-            for (row, _), cell in cells_dict.items() if row == 0
+            for (row, _), cell in cells_dict.items()
+            if row == 0
         ]
         x0_px = min(b.x0 for b in all_bboxes)
         x1_px = max(b.x1 for b in all_bboxes)
-        y_top_px        = max(b.y1 for b in all_bboxes)
-        y_bottom_px     = min(b.y0 for b in all_bboxes)
+        y_top_px = max(b.y1 for b in all_bboxes)
+        y_bottom_px = min(b.y0 for b in all_bboxes)
         y_hdr_bottom_px = min(b.y0 for b in header_bboxes)
         inv = fig.transFigure.inverted()
 
         def _hline(y_px: float, lw: float) -> None:
             x0_f = inv.transform((x0_px, y_px))[0]
             x1_f = inv.transform((x1_px, y_px))[0]
-            y_f  = inv.transform((x0_px, y_px))[1]
-            fig.add_artist(mlines.Line2D(
-                [x0_f, x1_f], [y_f, y_f],
-                transform=fig.transFigure, color="black", linewidth=lw, clip_on=False,
-            ))
+            y_f = inv.transform((x0_px, y_px))[1]
+            fig.add_artist(
+                mlines.Line2D(
+                    [x0_f, x1_f],
+                    [y_f, y_f],
+                    transform=fig.transFigure,
+                    color="black",
+                    linewidth=lw,
+                    clip_on=False,
+                )
+            )
 
-        _hline(y_top_px,        1.5)
+        _hline(y_top_px, 1.5)
         _hline(y_hdr_bottom_px, 0.8)
-        _hline(y_bottom_px,     1.5)
+        _hline(y_bottom_px, 1.5)
 
         fig.patch.set_facecolor("white")
-        plt.savefig(str(output_path), dpi=150, bbox_inches="tight",
-                    pad_inches=0.05, facecolor="white", edgecolor="none")
+        plt.savefig(
+            str(output_path),
+            dpi=150,
+            bbox_inches="tight",
+            pad_inches=0.05,
+            facecolor="white",
+            edgecolor="none",
+        )
         plt.close(fig)
         _trim_whitespace(output_path)
         if debug_dir is not None:
@@ -561,6 +609,7 @@ def _render_table_matplotlib(
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
 
 def parse_tables(
     tex_path: Path,
@@ -638,7 +687,10 @@ def parse_tables(
                     stem=stem,
                 )
                 if ok:
-                    _write_text(debug_dir / f"{stem}.fallback.txt", "latex_failed -> matplotlib\n")
+                    _write_text(
+                        debug_dir / f"{stem}.fallback.txt",
+                        "latex_failed -> matplotlib\n",
+                    )
                     render_backend = "matplotlib"
             else:
                 render_backend = "latex"
@@ -654,14 +706,16 @@ def parse_tables(
             tbl_number -= 1
             continue
 
-        results.append(FigureInfo(
-            image_path=output_path,
-            caption=caption,
-            label=label,
-            number=tbl_number,
-            kind="table",
-            render_backend=render_backend,
-        ))
+        results.append(
+            FigureInfo(
+                image_path=output_path,
+                caption=caption,
+                label=label,
+                number=tbl_number,
+                kind="table",
+                render_backend=render_backend,
+            )
+        )
 
         if len(results) >= max_tables:
             break

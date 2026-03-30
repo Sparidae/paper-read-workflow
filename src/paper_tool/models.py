@@ -64,18 +64,18 @@ class PaperNote:
 class Classification:
     """LLM-generated classification tags for a paper (decoupled from note)."""
 
-    paper_type: list[str] = field(default_factory=list)      # 论文类型
+    paper_type: list[str] = field(default_factory=list)  # 论文类型
     research_areas: list[str] = field(default_factory=list)  # 研究领域
-    institutions: list[str] = field(default_factory=list)    # 来源机构
+    institutions: list[str] = field(default_factory=list)  # 来源机构
 
 
 @dataclass
 class FigureInfo:
     """A single figure or table extracted from a paper's LaTeX source."""
 
-    image_path: "Path"   # absolute path to the PNG/JPG file on disk
-    caption: str         # cleaned caption text (LaTeX commands stripped)
-    label: str = ""      # LaTeX \label value (e.g. "fig:overview")
-    number: int = 0      # figure/table number in document order (1-based)
-    kind: str = "figure" # "figure" or "table"
+    image_path: "Path"  # absolute path to the PNG/JPG file on disk
+    caption: str  # cleaned caption text (LaTeX commands stripped)
+    label: str = ""  # LaTeX \label value (e.g. "fig:overview")
+    number: int = 0  # figure/table number in document order (1-based)
+    kind: str = "figure"  # "figure" or "table"
     render_backend: str = ""  # tables: "latex" / "matplotlib" / "cached"

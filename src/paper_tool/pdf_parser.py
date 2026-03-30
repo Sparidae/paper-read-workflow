@@ -87,6 +87,7 @@ def extract_text_from_latex(tex_path: Path, max_chars: int | None = None) -> str
         r"\\begin\{thebibliography\}.*?\\end\{thebibliography\}",
     ]
     import re as _re
+
     for pat in _STRIP_PATTERNS:
         raw = _re.sub(pat, "", raw, flags=_re.DOTALL)
 

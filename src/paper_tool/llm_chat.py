@@ -6,8 +6,6 @@ from pathlib import Path
 
 from paper_tool.config import get_config
 from paper_tool.llm_stream import completion_to_text
-from paper_tool.models import PaperMetadata
-
 
 _SYSTEM_PROMPT_TEMPLATE = """\
 你是一位专业的学术论文问答助手，正在帮助研究者深入理解以下论文。
@@ -54,8 +52,8 @@ def find_paper_file(query: str, papers_dir: Path) -> Path:
 
     # Collect all .tex and .pdf files recursively, excluding figures/ directories
     candidates = [
-        f for f in
-        list(papers_dir.glob("**/*.tex")) + list(papers_dir.glob("**/*.pdf"))
+        f
+        for f in list(papers_dir.glob("**/*.tex")) + list(papers_dir.glob("**/*.pdf"))
         if "figures" not in f.parts
     ]
 
@@ -135,8 +133,10 @@ class ChatSession:
             kwargs["api_base"] = self._cfg.openai_base_url
 
         if debug:
-            print(f"\n[DEBUG] 发送 {len(all_messages)} 条消息，"
-                  f"最新问题: {question[:80]}", flush=True)
+            print(
+                f"\n[DEBUG] 发送 {len(all_messages)} 条消息，最新问题: {question[:80]}",
+                flush=True,
+            )
 
         result = completion_to_text(
             request_kwargs=kwargs,

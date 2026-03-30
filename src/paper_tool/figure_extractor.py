@@ -19,7 +19,6 @@ from typing import Optional
 
 from paper_tool.models import FigureInfo
 
-
 # Stay comfortably below Notion's 20 MB single-part upload limit
 _MAX_FILE_BYTES = 18 * 1024 * 1024
 
@@ -34,9 +33,7 @@ _FIGURE_ENV = re.compile(
 )
 
 # Matches \includegraphics[optional]{path}
-_INCLUDEGRAPHICS = re.compile(
-    r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}"
-)
+_INCLUDEGRAPHICS = re.compile(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}")
 
 # Matches \label{...}
 _LABEL = re.compile(r"\\label\{([^}]+)\}")
@@ -82,6 +79,7 @@ _LATEX_TEMPLATE = r"""\documentclass[border=4pt]{standalone}
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+
 def _strip_tex_comments(text: str) -> str:
     """Remove LaTeX line comments (``%`` to end-of-line, ignoring ``\\%``)."""
     return _TEX_COMMENT.sub("", text)
@@ -105,7 +103,7 @@ def _find_caption(env_text: str) -> str:
     idx = env_text.find(r"\caption")
     if idx == -1:
         return ""
-    after = env_text[idx + len(r"\caption"):].lstrip()
+    after = env_text[idx + len(r"\caption") :].lstrip()
 
     # Skip optional short caption: \caption[short]{full}
     if after.startswith("["):
@@ -134,9 +132,18 @@ def _extract_preamble_macros(tex: str) -> str:
     """Extract multi-line preamble macros/settings used by figures."""
     preamble = tex.split(r"\begin{document}", 1)[0]
     starters = (
-        r"\newcommand", r"\renewcommand", r"\def", r"\DeclareMathOperator",
-        r"\providecommand", r"\newcolumntype", r"\definecolor", r"\colorlet",
-        r"\let", r"\usetikzlibrary", r"\usepgfplotslibrary", r"\tikzset",
+        r"\newcommand",
+        r"\renewcommand",
+        r"\def",
+        r"\DeclareMathOperator",
+        r"\providecommand",
+        r"\newcolumntype",
+        r"\definecolor",
+        r"\colorlet",
+        r"\let",
+        r"\usetikzlibrary",
+        r"\usepgfplotslibrary",
+        r"\tikzset",
         r"\pgfplotsset",
     )
     lines = preamble.splitlines()
@@ -162,9 +169,7 @@ def _extract_preamble_macros(tex: str) -> str:
 def _extract_renewcommand_stubs(tex: str) -> str:
     r"""Create ``\providecommand`` stubs for commands redefined in the preamble."""
     preamble = tex.split(r"\begin{document}", 1)[0]
-    commands = sorted(set(
-        re.findall(r"\\renewcommand\{(\\[A-Za-z@]+)\}", preamble)
-    ))
+    commands = sorted(set(re.findall(r"\\renewcommand\{(\\[A-Za-z@]+)\}", preamble)))
     return "\n".join(f"\\providecommand{{{cmd}}}{{}}" for cmd in commands)
 
 
@@ -248,7 +253,9 @@ def _write_status(debug_dir: Path, stem: str, *, renderer: str, note: str = "") 
     _write_text(debug_dir / f"{stem}.status.txt", "\n".join(lines) + "\n")
 
 
-def _write_meta(debug_dir: Path, stem: str, *, env_index: int, label: str, caption: str) -> None:
+def _write_meta(
+    debug_dir: Path, stem: str, *, env_index: int, label: str, caption: str
+) -> None:
     lines = [
         f"env_index={env_index}",
         f"label={label}",
@@ -282,8 +289,8 @@ def _copy_tree_contents(src: Path, dst: Path) -> None:
 
 def _trim_whitespace(image_path: Path, padding: int = 10) -> None:
     try:
-        from PIL import Image
         import numpy as np
+        from PIL import Image
 
         img = Image.open(str(image_path)).convert("RGB")
         arr = np.array(img)
@@ -304,8 +311,8 @@ def _trim_whitespace(image_path: Path, padding: int = 10) -> None:
 def _image_touches_border(image_path: Path, margin: int = 8) -> bool:
     """Heuristic: detect likely clipping via edge occupancy, not single-pixel touches."""
     try:
-        from PIL import Image
         import numpy as np
+        from PIL import Image
 
         img = Image.open(str(image_path)).convert("RGB")
         arr = np.array(img)
@@ -318,10 +325,10 @@ def _image_touches_border(image_path: Path, margin: int = 8) -> bool:
         left_ratio = float(mask[:, :margin].mean())
         right_ratio = float(mask[:, -margin:].mean())
         return bool(
-            top_ratio > 0.20 or
-            bottom_ratio > 0.20 or
-            left_ratio > 0.20 or
-            right_ratio > 0.20
+            top_ratio > 0.20
+            or bottom_ratio > 0.20
+            or left_ratio > 0.20
+            or right_ratio > 0.20
         )
     except Exception:
         return False
@@ -343,7 +350,9 @@ def _probe_textwidth(
     """
     if shutil.which("pdflatex") is None:
         return None
-    preamble = tex.split(r"\begin{document}", 1)[0] if r"\begin{document}" in tex else ""
+    preamble = (
+        tex.split(r"\begin{document}", 1)[0] if r"\begin{document}" in tex else ""
+    )
     dc_match = re.search(r"\\documentclass(?:\[[^\]]*\])?\{[^}]+\}", preamble)
     if not dc_match:
         return None
@@ -400,7 +409,9 @@ def _probe_textwidth(
 def _estimate_textwidth(tex: str) -> str:
     r"""Heuristic estimation of ``\textwidth`` from common document classes and
     style packages.  Used as fallback when the compilation probe fails."""
-    preamble = tex.split(r"\begin{document}", 1)[0] if r"\begin{document}" in tex else ""
+    preamble = (
+        tex.split(r"\begin{document}", 1)[0] if r"\begin{document}" in tex else ""
+    )
     if not preamble:
         return "6.50in"
 
@@ -413,10 +424,15 @@ def _estimate_textwidth(tex: str) -> str:
 
     # 2) Known style packages
     style_widths = {
-        "neurips": "5.50in", "nips": "5.50in",
-        "iclr": "5.50in", "icml": "6.75in",
-        "acl": "6.30in", "emnlp": "6.30in", "naacl": "6.30in",
-        "aaai": "7.00in", "jmlr": "6.00in",
+        "neurips": "5.50in",
+        "nips": "5.50in",
+        "iclr": "5.50in",
+        "icml": "6.75in",
+        "acl": "6.30in",
+        "emnlp": "6.30in",
+        "naacl": "6.30in",
+        "aaai": "7.00in",
+        "jmlr": "6.00in",
     }
     for pkg, width in style_widths.items():
         if re.search(rf"\\usepackage(?:\[[^\]]*\])?\{{{pkg}", preamble):
@@ -441,9 +457,7 @@ def _estimate_textwidth(tex: str) -> str:
     return "6.50in"
 
 
-def _detect_textwidth(
-    tex: str, source_dir: Optional[Path] = None
-) -> tuple[str, str]:
+def _detect_textwidth(tex: str, source_dir: Optional[Path] = None) -> tuple[str, str]:
     r"""Determine the paper's ``\textwidth`` and ``\columnwidth``.
 
     Returns ``(textwidth, columnwidth)`` as TeX length strings.
@@ -461,7 +475,9 @@ def _detect_textwidth(
 
 def _is_twocolumn(tex: str) -> bool:
     """Detect whether the paper uses a two-column layout."""
-    preamble = tex.split(r"\begin{document}", 1)[0] if r"\begin{document}" in tex else ""
+    preamble = (
+        tex.split(r"\begin{document}", 1)[0] if r"\begin{document}" in tex else ""
+    )
     dc = re.search(r"\\documentclass(?:\[([^\]]*)\])?\{([^}]+)\}", preamble)
     if not dc:
         return False
@@ -506,7 +522,9 @@ def _render_figure_latex(
 ) -> bool:
     """Compile a standalone figure and rasterise it to PNG."""
     if shutil.which("pdflatex") is None:
-        _write_status(debug_dir, stem, renderer="latex_failed", note="pdflatex_not_found")
+        _write_status(
+            debug_dir, stem, renderer="latex_failed", note="pdflatex_not_found"
+        )
         return False
 
     col_width = column_width or text_width
@@ -517,8 +535,7 @@ def _render_figure_latex(
 
         for text_height in height_candidates:
             tex_src = (
-                _LATEX_TEMPLATE
-                .replace("@@RENEW_STUBS@@", renew_stubs)
+                _LATEX_TEMPLATE.replace("@@RENEW_STUBS@@", renew_stubs)
                 .replace("@@PREAMBLE_MACROS@@", preamble_macros)
                 .replace("@@FIGURE_BODY@@", figure_body)
                 .replace("@@TEXT_WIDTH@@", text_width)
@@ -582,16 +599,26 @@ def _render_figure_latex(
                 doc.close()
                 _trim_whitespace(output_path)
 
-                if _image_touches_border(output_path) and text_height != height_candidates[-1]:
+                if (
+                    _image_touches_border(output_path)
+                    and text_height != height_candidates[-1]
+                ):
                     output_path.unlink(missing_ok=True)
                     continue
 
                 _clear_debug_artifacts(debug_dir, stem)
-                _write_status(debug_dir, stem, renderer="latex", note=f"canvas={text_width}x{text_height}")
+                _write_status(
+                    debug_dir,
+                    stem,
+                    renderer="latex",
+                    note=f"canvas={text_width}x{text_height}",
+                )
                 return True
 
         _write_text(debug_dir / f"{stem}.latex.tex", last_tex_src)
-        _write_status(debug_dir, stem, renderer="latex_failed", note="compile_error_or_clipped")
+        _write_status(
+            debug_dir, stem, renderer="latex_failed", note="compile_error_or_clipped"
+        )
         return False
     except Exception:
         _write_text(debug_dir / f"{stem}.latex.tex", locals().get("last_tex_src", ""))
@@ -668,6 +695,7 @@ def convert_pdf_figures(figures_dir: Path) -> int:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+
 def parse_figures(
     tex_path: Path,
     figures_dir: Path,
@@ -723,7 +751,9 @@ def parse_figures(
             fig_number += 1
             rendered_path = figures_dir / f"latex_figure_env_{env_index:02d}.png"
             stem = f"latex_figure_env_{env_index:02d}"
-            _write_meta(debug_dir, stem, env_index=env_index, label=label, caption=caption)
+            _write_meta(
+                debug_dir, stem, env_index=env_index, label=label, caption=caption
+            )
             if force_rerender:
                 rendered_path.unlink(missing_ok=True)
             if not rendered_path.exists():
