@@ -324,13 +324,21 @@ def main():
         metavar="SEC",
         help="每请求间隔秒数（默认 0.1）",
     )
-    parser.add_argument("--output", metavar="FILE", help="结果保存为 CSV 文件")
+    parser.add_argument(
+        "--output",
+        metavar="FILE",
+        default=None,
+        help="结果保存为 CSV 文件（默认：<输入文件名>_likes.csv）",
+    )
     parser.add_argument(
         "--debug",
         action="store_true",
         help="打印第一篇论文的 alphaxiv 原始数据，用于调试选择器",
     )
     args = parser.parse_args()
+    if args.output is None:
+        stem = Path(args.input).stem.lstrip(".")
+        args.output = str(Path(args.input).parent / f"{stem}_likes.csv")
     asyncio.run(run(args))
 
 
