@@ -110,10 +110,14 @@ async def query_s2_batch(
 
 
 async def query_hf_upvotes(
-    client: httpx.AsyncClient, arxiv_ids: list[str], concurrency: int = 16
-) -> dict[str, int]:
-    """并发查询 HuggingFace Papers upvotes，返回 {arxiv_id: upvotes}。"""
+    client: httpx.AsyncClient, arxiv_ids: list[str], concurrency: int = 10
+) -> tuple[dict[str, int], Counter]:
+    """
+    逐篇查询 HuggingFace Papers upvotes，带进度条。
+    返回 ({arxiv_id: upvotes}, error_counter)。
+    """
     results: dict[str, int] = {}
+    errors: Counter = Counter()
     semaphore = asyncio.Semaphore(concurrency)
 
     async def fetch_one(arxiv_id: str):
@@ -124,12 +128,29 @@ async def query_hf_upvotes(
                 if resp.status_code == 200:
                     data = resp.json()
                     results[arxiv_id] = data.get("upvotes", 0) or 0
-                # 404 = 论文未在 HF Papers 收录，跳过
-            except Exception:
-                pass
+                elif resp.status_code == 404:
+                    errors["not_in_hf_papers"] += 1
+                else:
+                    errors[f"http_{resp.status_code}"] += 1
+            except httpx.TimeoutException:
+                errors["timeout"] += 1
+            except Exception as e:
+                errors[f"{type(e).__name__}"] += 1
 
-    await asyncio.gather(*[fetch_one(aid) for aid in arxiv_ids])
-    return results
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        task_id = progress.add_task("查询 HF Papers...", total=len(arxiv_ids))
+        coros = [fetch_one(aid) for aid in arxiv_ids]
+        for coro in asyncio.as_completed(coros):
+            await coro
+            progress.advance(task_id)
+
+    return results, errors
 
 
 async def run(args):
@@ -145,10 +166,8 @@ async def run(args):
     title_map = {p["arxiv_id"]: p["title"] for p in papers}
 
     async with httpx.AsyncClient() as client:
-        console.print("[dim]并行查询 Semantic Scholar + Hugging Face Papers...[/dim]")
-        s2_task = query_s2_batch(client, arxiv_ids)
-        hf_task = query_hf_upvotes(client, arxiv_ids)
-        s2_results, hf_results = await asyncio.gather(s2_task, hf_task)
+        s2_results = await query_s2_batch(client, arxiv_ids)
+        hf_results, hf_errors = await query_hf_upvotes(client, arxiv_ids)
 
     # 合并结果
     enriched = []
@@ -187,6 +206,11 @@ async def run(args):
     top = filtered[: args.top]
 
     hf_count = sum(1 for r in enriched if r["hf_upvotes"] > 0)
+
+    # 显示 HF 错误统计
+    if hf_errors:
+        parts = ", ".join(f"{k}: {v}" for k, v in hf_errors.most_common())
+        console.print(f"[dim]HF 查询统计：{parts}[/dim]")
 
     # 展示表格
     sort_label = "HF Upvotes" if sort_key == "upvotes" else "Inf.Cite"
