@@ -26,6 +26,13 @@ from pathlib import Path
 
 import httpx
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+)
 from rich.table import Table
 
 console = Console()
