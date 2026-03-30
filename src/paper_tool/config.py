@@ -76,8 +76,7 @@ class Config:
         token = os.getenv("NOTION_TOKEN", "")
         if not token:
             raise ValueError(
-                "NOTION_TOKEN is not set. "
-                "Please add it to your .env file."
+                "NOTION_TOKEN is not set. Please add it to your .env file."
             )
         return token
 
@@ -86,24 +85,26 @@ class Config:
         db_id = os.getenv("NOTION_DATABASE_ID", "")
         if not db_id:
             raise ValueError(
-                "NOTION_DATABASE_ID is not set. "
-                "Please add it to your .env file."
+                "NOTION_DATABASE_ID is not set. Please add it to your .env file."
             )
         return db_id
 
     @property
     def notion_properties(self) -> dict[str, str]:
-        return self._yaml.get("notion", {}).get("properties", {
-            "title": "Title",
-            "authors": "Authors",
-            "abstract": "Abstract",
-            "source": "Source",
-            "url": "URL",
-            "published_date": "Published Date",
-            "added_date": "Added Date",
-            "tags": "Tags",
-            "status": "Status",
-        })
+        return self._yaml.get("notion", {}).get(
+            "properties",
+            {
+                "title": "Title",
+                "authors": "Authors",
+                "abstract": "Abstract",
+                "source": "Source",
+                "url": "URL",
+                "published_date": "Published Date",
+                "added_date": "Added Date",
+                "tags": "Tags",
+                "status": "Status",
+            },
+        )
 
     @property
     def notion_paper_type_prop(self) -> str:
@@ -205,12 +206,12 @@ class Config:
 
     @property
     def llm_stream_window(self) -> bool:
-        """Whether to render a small live window for streamed LLM output."""
+        """Whether to render LLM token streaming output."""
         return bool(self._yaml.get("llm", {}).get("stream_window", False))
 
     @property
     def llm_stream_window_height(self) -> int:
-        """Fixed terminal height (lines) for the live stream window."""
+        """Legacy stream render height setting (kept for backward compatibility)."""
         raw = self._yaml.get("llm", {}).get("stream_window_height", 8)
         try:
             return max(4, int(raw))
@@ -261,13 +262,15 @@ class Config:
         table.add_row("LLM 模型", self.llm_model)
         table.add_row("最大输入 Token", str(self.llm_max_input_tokens))
         table.add_row("最大输出 Token", str(self.llm_max_output_tokens))
-        table.add_row("流式小窗口", "开启" if self.llm_stream_window else "关闭")
-        table.add_row("流式窗口高度", str(self.llm_stream_window_height))
+        table.add_row("LLM 流式输出", "开启" if self.llm_stream_window else "关闭")
+        table.add_row("流式高度(兼容项)", str(self.llm_stream_window_height))
         table.add_row("PDF 存储目录", str(self.papers_dir))
         table.add_row("Notion Token", mask(os.getenv("NOTION_TOKEN", "")))
         table.add_row("Notion Database ID", mask(os.getenv("NOTION_DATABASE_ID", "")))
         table.add_row("OpenAI Key", mask(os.getenv("OPENAI_API_KEY", "")))
-        table.add_row("OpenAI Base URL", os.getenv("OPENAI_BASE_URL", "") or "(官方默认)")
+        table.add_row(
+            "OpenAI Base URL", os.getenv("OPENAI_BASE_URL", "") or "(官方默认)"
+        )
         table.add_row("Anthropic Key", mask(os.getenv("ANTHROPIC_API_KEY", "")))
         table.add_row("Gemini Key", mask(os.getenv("GEMINI_API_KEY", "")))
 

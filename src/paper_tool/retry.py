@@ -9,6 +9,7 @@ from typing import Callable, TypeVar
 
 log = logging.getLogger(__name__)
 
+
 T = TypeVar("T")
 
 
@@ -38,7 +39,7 @@ def retry(
                     last_exc = exc
                     if attempt == max_attempts - 1:
                         raise
-                    delay = min(base_delay * (2 ** attempt), max_delay)
+                    delay = min(base_delay * (2**attempt), max_delay)
                     log.warning(
                         "%s failed (attempt %d/%d): %s — retrying in %.1fs",
                         func.__qualname__,
@@ -77,7 +78,7 @@ def with_retry(
             last_exc = exc
             if attempt == max_attempts - 1:
                 raise
-            delay = min(base_delay * (2 ** attempt), max_delay)
+            delay = min(base_delay * (2**attempt), max_delay)
             log.warning(
                 "%s failed (attempt %d/%d): %s — retrying in %.1fs",
                 getattr(fn, "__qualname__", str(fn)),
