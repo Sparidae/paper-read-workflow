@@ -21,3 +21,6 @@ papers/
 # 构建产物
 dist/
 *.egg-info/
+
+
+.test_list
