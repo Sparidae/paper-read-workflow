@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-从论文推荐列表中提取 arxiv ID，通过 Semantic Scholar 批量查询引用数，筛选高关注度论文。
+从论文推荐列表中提取 arxiv ID，同时查询两个数据源，筛选高关注度论文：
 
-数据来源：Semantic Scholar API（免费、无需认证、支持 arxiv ID 批量查询）
-排序指标：influentialCitationCount（高影响力引用数）+ citationCount（总引用数）
+  - Semantic Scholar：citationCount / influentialCitationCount（学术引用）
+  - Hugging Face Papers：upvotes（ML 从业者社区关注度）
 
+两个数据源均免费、无需认证、支持 arxiv ID 直查。
 输入文件和输出结果统一放在 scripts/data/ 目录（已加入 .gitignore）。
 
 用法:
     uv run python scripts/rank_by_likes.py scripts/data/my_list.md
-    uv run python scripts/rank_by_likes.py scripts/data/my_list.md --min-cites 1 --top 30
-    uv run python scripts/rank_by_likes.py scripts/data/my_list.md --output scripts/data/out.csv
+    uv run python scripts/rank_by_likes.py scripts/data/my_list.md --min-upvotes 1 --top 30
+    uv run python scripts/rank_by_likes.py scripts/data/my_list.md --sort citations
 """
 
 import argparse
@@ -39,6 +40,9 @@ TITLE_RE = re.compile(r"\*\*\[([^\]]+)\]")
 S2_BATCH_URL = "https://api.semanticscholar.org/graph/v1/paper/batch"
 S2_FIELDS = "citationCount,influentialCitationCount,title,year,externalIds"
 S2_BATCH_SIZE = 500
+
+# Hugging Face Papers API
+HF_PAPER_URL = "https://huggingface.co/api/papers/{arxiv_id}"
 
 
 def extract_papers(text: str) -> list[dict]:
@@ -105,6 +109,29 @@ async def query_s2_batch(
     return results
 
 
+async def query_hf_upvotes(
+    client: httpx.AsyncClient, arxiv_ids: list[str], concurrency: int = 16
+) -> dict[str, int]:
+    """并发查询 HuggingFace Papers upvotes，返回 {arxiv_id: upvotes}。"""
+    results: dict[str, int] = {}
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def fetch_one(arxiv_id: str):
+        async with semaphore:
+            url = HF_PAPER_URL.format(arxiv_id=arxiv_id)
+            try:
+                resp = await client.get(url, timeout=15)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    results[arxiv_id] = data.get("upvotes", 0) or 0
+                # 404 = 论文未在 HF Papers 收录，跳过
+            except Exception:
+                pass
+
+    await asyncio.gather(*[fetch_one(aid) for aid in arxiv_ids])
+    return results
+
+
 async def run(args):
     text = Path(args.input).read_text(encoding="utf-8")
     papers = extract_papers(text)
@@ -118,36 +145,57 @@ async def run(args):
     title_map = {p["arxiv_id"]: p["title"] for p in papers}
 
     async with httpx.AsyncClient() as client:
-        s2_results = await query_s2_batch(client, arxiv_ids)
+        console.print("[dim]并行查询 Semantic Scholar + Hugging Face Papers...[/dim]")
+        s2_task = query_s2_batch(client, arxiv_ids)
+        hf_task = query_hf_upvotes(client, arxiv_ids)
+        s2_results, hf_results = await asyncio.gather(s2_task, hf_task)
 
     # 合并结果
     enriched = []
-    not_found = 0
-    for arxiv_id, paper in s2_results.items():
+    not_found_s2 = 0
+    for arxiv_id in arxiv_ids:
+        paper = s2_results.get(arxiv_id)
         if paper is None:
-            not_found += 1
-            continue
+            not_found_s2 += 1
         enriched.append(
             {
                 "arxiv_id": arxiv_id,
-                "title": title_map.get(arxiv_id, "") or paper.get("title", ""),
-                "year": paper.get("year") or "",
-                "citations": paper.get("citationCount") or 0,
-                "influential": paper.get("influentialCitationCount") or 0,
+                "title": title_map.get(arxiv_id, "")
+                or (paper.get("title", "") if paper else ""),
+                "year": (paper.get("year") or "") if paper else "",
+                "citations": (paper.get("citationCount") or 0) if paper else 0,
+                "influential": (paper.get("influentialCitationCount") or 0)
+                if paper
+                else 0,
+                "hf_upvotes": hf_results.get(arxiv_id, 0),
             }
         )
 
-    # 过滤并排序：先按 influential 降序，再按 citations 降序
-    filtered = [r for r in enriched if r["citations"] >= args.min_cites]
-    filtered.sort(key=lambda x: (x["influential"], x["citations"]), reverse=True)
+    # 排序
+    sort_key = args.sort
+    if sort_key == "upvotes":
+        enriched.sort(key=lambda x: (x["hf_upvotes"], x["influential"]), reverse=True)
+    else:  # citations（默认）
+        enriched.sort(key=lambda x: (x["influential"], x["citations"]), reverse=True)
+
+    # 过滤
+    filtered = [
+        r
+        for r in enriched
+        if r["citations"] >= args.min_cites or r["hf_upvotes"] >= args.min_upvotes
+    ]
     top = filtered[: args.top]
 
+    hf_count = sum(1 for r in enriched if r["hf_upvotes"] > 0)
+
     # 展示表格
+    sort_label = "HF Upvotes" if sort_key == "upvotes" else "Inf.Cite"
     table = Table(
-        title=f"Top {len(top)} 论文（按引用量排序，最低 {args.min_cites} 次引用）",
+        title=f"Top {len(top)} 论文（排序：{sort_label}）",
         show_lines=False,
     )
     table.add_column("#", style="dim", width=4)
+    table.add_column("HF♥", style="bold yellow", width=6, justify="right")
     table.add_column("Inf.Cite", style="bold magenta", width=9, justify="right")
     table.add_column("Cite", style="bold green", width=6, justify="right")
     table.add_column("Year", style="dim", width=6)
@@ -156,10 +204,12 @@ async def run(args):
 
     for i, paper in enumerate(top, 1):
         title = paper["title"]
-        if len(title) > 85:
-            title = title[:82] + "..."
+        if len(title) > 75:
+            title = title[:72] + "..."
+        hf = str(paper["hf_upvotes"]) if paper["hf_upvotes"] else "[dim]-[/dim]"
         table.add_row(
             str(i),
+            hf,
             str(paper["influential"]),
             str(paper["citations"]),
             str(paper["year"]),
@@ -169,14 +219,12 @@ async def run(args):
 
     console.print(table)
     console.print(
-        f"\n[dim]找到 {len(enriched)} 篇（{not_found} 篇 S2 未收录），"
-        f"其中 {len(filtered)} 篇引用数 >= {args.min_cites}[/dim]"
+        f"\n[dim]S2 找到 {len(enriched) - not_found_s2} 篇（{not_found_s2} 篇未收录）"
+        f"；HF Papers 收录 {hf_count} 篇[/dim]"
     )
-
-    if top:
-        console.print(
-            "[dim]Inf.Cite = 高影响力引用数（更有区分度）；Cite = 总引用数[/dim]"
-        )
+    console.print(
+        "[dim]HF♥ = Hugging Face 社区 upvotes；Inf.Cite = S2 高影响力引用数[/dim]"
+    )
 
     if args.output:
         with open(args.output, "w", newline="", encoding="utf-8") as f:
@@ -184,13 +232,14 @@ async def run(args):
                 f,
                 fieldnames=[
                     "rank",
+                    "hf_upvotes",
                     "influential_citations",
                     "citations",
                     "year",
                     "arxiv_id",
                     "title",
                     "arxiv_url",
-                    "s2_url",
+                    "hf_url",
                 ],
             )
             writer.writeheader()
@@ -198,13 +247,14 @@ async def run(args):
                 writer.writerow(
                     {
                         "rank": i,
+                        "hf_upvotes": paper["hf_upvotes"],
                         "influential_citations": paper["influential"],
                         "citations": paper["citations"],
                         "year": paper["year"],
                         "arxiv_id": paper["arxiv_id"],
                         "title": paper["title"],
                         "arxiv_url": f"https://arxiv.org/abs/{paper['arxiv_id']}",
-                        "s2_url": f"https://www.semanticscholar.org/paper/arXiv:{paper['arxiv_id']}",
+                        "hf_url": f"https://huggingface.co/papers/{paper['arxiv_id']}",
                     }
                 )
         console.print(f"[green]已保存至 {args.output}[/green]")
@@ -220,7 +270,20 @@ def main():
         type=int,
         default=0,
         metavar="N",
-        help="最低引用数过滤（默认 0，显示所有有数据的论文）",
+        help="最低引用数过滤（默认 0）",
+    )
+    parser.add_argument(
+        "--min-upvotes",
+        type=int,
+        default=0,
+        metavar="N",
+        help="最低 HF upvotes 过滤（默认 0）",
+    )
+    parser.add_argument(
+        "--sort",
+        choices=["citations", "upvotes"],
+        default="upvotes",
+        help="排序依据：citations（S2 高影响力引用）或 upvotes（HF 社区，默认）",
     )
     parser.add_argument(
         "--top", type=int, default=50, metavar="N", help="显示前 N 篇（默认 50）"
