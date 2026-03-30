@@ -209,7 +209,9 @@ def batch(
     ),
     skip_llm: bool = typer.Option(False, "--skip-llm", help="跳过 LLM 分析"),
     continue_on_error: bool = typer.Option(
-        True, "--continue-on-error/--stop-on-error", help="遇到错误时是否继续处理下一篇"
+        False,
+        "--continue-on-error/--stop-on-error",
+        help="遇到错误时是否继续处理下一篇（默认出错即停）",
     ),
     debug: bool = typer.Option(
         False, "--debug", help="打印 LLM 原始 prompt 和回包，用于排查问题"
