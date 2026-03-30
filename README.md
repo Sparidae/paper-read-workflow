@@ -120,8 +120,14 @@ uv run paper-tool add "https://arxiv.org/abs/2301.00001"
 # 只保存元数据，跳过 LLM 分析
 uv run paper-tool add --skip-llm "https://arxiv.org/abs/2301.00001"
 
+# 若论文已存在，会先二次确认；确认后归档旧页面再重新导入
+uv run paper-tool add --force "https://arxiv.org/abs/2301.00001"
+
 # 批量添加（urls.txt 每行一个链接，# 开头为注释）
 uv run paper-tool batch urls.txt
+
+# 批量模式也可强制覆盖重复论文
+uv run paper-tool batch --force urls.txt
 
 # 调试模式：打印 LLM 原始 prompt 和返回内容
 uv run paper-tool add --debug "https://arxiv.org/abs/2301.00001"
