@@ -153,7 +153,8 @@
     }
     #llm-output {
       width: 100%;
-      height: 360px;
+      height: 220px;
+      max-height: 40vh;
       resize: vertical;
       background: #0f172a;
       color: #e2e8f0;
@@ -326,8 +327,6 @@
       }
 
       case 'llm_end': {
-        // Expand box to show full content without scrollbar
-        llmOutput.style.height = llmOutput.scrollHeight + 'px';
         break;
       }
 
