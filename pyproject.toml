@@ -16,6 +16,8 @@ dependencies = [
     "httpx>=0.27.0",
     "matplotlib>=3.7.0",
     "pylatexenc>=2.10",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
 ]
 
 [project.scripts]
@@ -27,3 +29,15 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/paper_tool"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.8",
+]
