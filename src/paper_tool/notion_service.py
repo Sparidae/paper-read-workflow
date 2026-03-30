@@ -5,7 +5,7 @@ from __future__ import annotations
 import mimetypes
 import re
 import time
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -13,7 +13,6 @@ import httpx
 
 from paper_tool.config import get_config
 from paper_tool.models import Classification, FigureInfo, PaperMetadata, PaperNote
-
 
 # Notion API: single rich_text element content limit is 2000 chars
 _BLOCK_CHAR_LIMIT = 1900
@@ -29,12 +28,12 @@ _NOTION_API_BASE = "https://api.notion.com/v1"
 # Inline Markdown pattern: links, bold+italic, bold, italic, inline code, inline math
 _INLINE_MD = re.compile(
     r"\[([^\]\n]+)\]\(([^)\n]+)\)"  # [text](url)
-    r"|\*\*\*([^*\n]+)\*\*\*"       # ***bold italic***
-    r"|\*\*([^*\n]+)\*\*"           # **bold**
-    r"|\*([^*\n]+)\*"               # *italic*
-    r"|`([^`\n]+)`"                 # `code`
-    r"|\\\((.+?)\\\)"               # \(...\)  inline math
-    r"|\$([^$\n]+)\$"               # $...$ inline math
+    r"|\*\*\*([^*\n]+)\*\*\*"  # ***bold italic***
+    r"|\*\*([^*\n]+)\*\*"  # **bold**
+    r"|\*([^*\n]+)\*"  # *italic*
+    r"|`([^`\n]+)`"  # `code`
+    r"|\\\((.+?)\\\)"  # \(...\)  inline math
+    r"|\$([^$\n]+)\$"  # $...$ inline math
 )
 
 
@@ -90,7 +89,7 @@ def _parse_inline(text: str) -> list[dict]:
         bold = m.group(4)
         italic = m.group(5)
         code = m.group(6)
-        math_paren = m.group(7)   # \(...\)
+        math_paren = m.group(7)  # \(...\)
         math_dollar = m.group(8)  # $...$
 
         if link_label is not None:
@@ -263,8 +262,17 @@ def _freeform_to_blocks(text: str) -> list[dict]:
         stripped = lines[i].strip()
 
         # ── Block equation: $$ ... $$ ────────────────────────────────
-        if stripped == "$$" or stripped.startswith("$$") and stripped.endswith("$$") and len(stripped) > 4:
-            if stripped.startswith("$$") and stripped.endswith("$$") and len(stripped) > 4:
+        if (
+            stripped == "$$"
+            or stripped.startswith("$$")
+            and stripped.endswith("$$")
+            and len(stripped) > 4
+        ):
+            if (
+                stripped.startswith("$$")
+                and stripped.endswith("$$")
+                and len(stripped) > 4
+            ):
                 # Single-line: $$expr$$
                 expr = stripped[2:-2]
                 blocks.append(_equation_block(expr))
@@ -281,8 +289,16 @@ def _freeform_to_blocks(text: str) -> list[dict]:
             continue
 
         # ── Block equation: \[ ... \] ────────────────────────────────
-        if stripped == r"\[" or (stripped.startswith(r"\[") and stripped.endswith(r"\]") and len(stripped) > 4):
-            if stripped.startswith(r"\[") and stripped.endswith(r"\]") and len(stripped) > 4:
+        if stripped == r"\[" or (
+            stripped.startswith(r"\[")
+            and stripped.endswith(r"\]")
+            and len(stripped) > 4
+        ):
+            if (
+                stripped.startswith(r"\[")
+                and stripped.endswith(r"\]")
+                and len(stripped) > 4
+            ):
                 expr = stripped[2:-2]
                 blocks.append(_equation_block(expr))
                 i += 1
@@ -338,9 +354,7 @@ def _get_heading_text(block: dict) -> "str | None":
     for htype in ("heading_1", "heading_2", "heading_3"):
         if block.get("type") == htype:
             rich = block.get(htype, {}).get("rich_text", [])
-            return "".join(
-                rt.get("text", {}).get("content", "") for rt in rich
-            )
+            return "".join(rt.get("text", {}).get("content", "") for rt in rich)
     return None
 
 
@@ -432,26 +446,51 @@ class NotionService:
             except Exception:
                 if attempt == 2:
                     raise
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
         raise RuntimeError("unreachable")
 
-    def find_existing_page(self, paper_url: str) -> str | None:
-        """Return the page ID if a page with this URL already exists."""
+    def find_existing_pages(self, paper_url: str) -> list[str]:
+        """Return non-archived page IDs whose URL equals ``paper_url``."""
         url_prop = self._props.get("url", "URL")
+        page_ids: list[str] = []
         try:
-            results = self._client.databases.query(
-                database_id=self._database_id,
-                filter={
-                    "property": url_prop,
-                    "url": {"equals": paper_url},
-                },
-            )
-            pages = results.get("results", [])
-            if pages:
-                return pages[0]["id"]
+            next_cursor: str | None = None
+            while True:
+                query_kwargs: dict[str, Any] = {
+                    "database_id": self._database_id,
+                    "filter": {
+                        "property": url_prop,
+                        "url": {"equals": paper_url},
+                    },
+                }
+                if next_cursor:
+                    query_kwargs["start_cursor"] = next_cursor
+                results = self._client.databases.query(**query_kwargs)
+                for page in results.get("results", []):
+                    if page.get("archived") or page.get("in_trash"):
+                        continue
+                    page_id = page.get("id")
+                    if isinstance(page_id, str):
+                        page_ids.append(page_id)
+                if not results.get("has_more"):
+                    break
+                next_cursor = results.get("next_cursor")
         except Exception:
-            pass
-        return None
+            return []
+        return page_ids
+
+    def find_existing_page(self, paper_url: str) -> str | None:
+        """Return the first non-archived page ID for this URL, if any."""
+        pages = self.find_existing_pages(paper_url)
+        return pages[0] if pages else None
+
+    def archive_page(self, page_id: str) -> None:
+        """Archive a page so it no longer blocks duplicate checks."""
+        self._api_call(
+            self._client.pages.update,
+            page_id=page_id,
+            archived=True,
+        )
 
     def create_page(self, metadata: PaperMetadata) -> str:
         """Create a new database page for the paper. Returns the page ID."""
@@ -459,9 +498,7 @@ class NotionService:
         today = datetime.now().date().isoformat()
 
         properties: dict[str, Any] = {
-            props["title"]: {
-                "title": [{"text": {"content": metadata.title}}]
-            },
+            props["title"]: {"title": [{"text": {"content": metadata.title}}]},
         }
 
         if metadata.authors:
@@ -469,29 +506,21 @@ class NotionService:
                 "rich_text": _rich_text(metadata.authors_str[:2000])
             }
 
-        properties[props["source"]] = {
-            "select": {"name": metadata.source.value}
-        }
+        properties[props["source"]] = {"select": {"name": metadata.source.value}}
 
-        properties[props["url"]] = {
-            "url": metadata.url
-        }
+        properties[props["url"]] = {"url": metadata.url}
 
         if metadata.published_date:
             properties[props["published_date"]] = {
                 "date": {"start": metadata.published_date.isoformat()}
             }
 
-        properties[props["added_date"]] = {
-            "date": {"start": today}
-        }
+        properties[props["added_date"]] = {"date": {"start": today}}
 
         if self._status_type == "checkbox":
             properties[props["status"]] = {"checkbox": False}
         else:
-            properties[props["status"]] = {
-                "select": {"name": self._default_status}
-            }
+            properties[props["status"]] = {"select": {"name": self._default_status}}
 
         response = self._api_call(
             self._client.pages.create,
@@ -508,12 +537,12 @@ class NotionService:
         self._api_call(
             self._client.pages.update,
             page_id=page_id,
-            properties={
-                prop_name: {"rich_text": _rich_text(summary[:2000])}
-            },
+            properties={prop_name: {"rich_text": _rich_text(summary[:2000])}},
         )
 
-    def update_classifications(self, page_id: str, classification: Classification) -> None:
+    def update_classifications(
+        self, page_id: str, classification: Classification
+    ) -> None:
         """Write classification tags (paper_type, research_areas, institutions) to page properties."""
         props = self._props
         prop_updates: dict[str, Any] = {}
@@ -533,7 +562,9 @@ class NotionService:
 
         if prop_updates:
             self._api_call(
-                self._client.pages.update, page_id=page_id, properties=prop_updates,
+                self._client.pages.update,
+                page_id=page_id,
+                properties=prop_updates,
             )
 
     def append_note(self, page_id: str, note: PaperNote) -> None:
@@ -589,7 +620,10 @@ class NotionService:
                     r1 = http.post(
                         f"{_NOTION_API}/file_uploads",
                         headers=headers_json,
-                        json={"filename": image_path.name, "content_type": content_type},
+                        json={
+                            "filename": image_path.name,
+                            "content_type": content_type,
+                        },
                     )
                     r1.raise_for_status()
                     file_upload_id = r1.json()["id"]
@@ -606,7 +640,7 @@ class NotionService:
 
             except Exception:
                 if attempt < 2:
-                    time.sleep(2 ** attempt)
+                    time.sleep(2**attempt)
                     continue
                 return None
         return None
@@ -625,7 +659,9 @@ class NotionService:
                 "image": {
                     "type": "file_upload",
                     "file_upload": {"id": upload_id},
-                    "caption": _caption_rich_text_md(fig.caption) if fig.caption else [],
+                    "caption": _caption_rich_text_md(fig.caption)
+                    if fig.caption
+                    else [],
                 },
             },
         ]
@@ -694,7 +730,8 @@ class NotionService:
                 final_blocks.append(block)
 
         unplaced_figs = [
-            fig for fig in figures
+            fig
+            for fig in figures
             if fig.number not in placed_figs and fig.number in fig_uploads
         ]
         if unplaced_figs:
@@ -703,7 +740,8 @@ class NotionService:
                 final_blocks.extend(self._figure_blocks(fig, fig_uploads[fig.number]))
 
         unplaced_tbls = [
-            tbl for tbl in tables
+            tbl
+            for tbl in tables
             if tbl.number not in placed_tbls and tbl.number in tbl_uploads
         ]
         if unplaced_tbls:
@@ -751,15 +789,19 @@ class NotionService:
                 label += f"  ({fig.label})"
             blocks.append(_heading3_block(label))
 
-            blocks.append({
-                "object": "block",
-                "type": "image",
-                "image": {
-                    "type": "file_upload",
-                    "file_upload": {"id": file_upload_id},
-                    "caption": _caption_rich_text_md(fig.caption) if fig.caption else [],
-                },
-            })
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "image",
+                    "image": {
+                        "type": "file_upload",
+                        "file_upload": {"id": file_upload_id},
+                        "caption": _caption_rich_text_md(fig.caption)
+                        if fig.caption
+                        else [],
+                    },
+                }
+            )
 
             uploaded += 1
             self._rate_limit()
