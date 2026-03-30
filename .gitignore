@@ -24,3 +24,4 @@ dist/
 
 # 脚本数据目录（输入列表、输出结果等，不纳入 git）
 scripts/data/
+scripts/.test_list
