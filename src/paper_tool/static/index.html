@@ -331,7 +331,7 @@
       }
 
       case 'done': {
-        endProcessing(msg.success !== false, msg.page_url || null);
+        endProcessing(msg.success !== false, msg.page_url || null, msg.skipped === true);
         break;
       }
 
@@ -362,7 +362,7 @@
     }
   }
 
-  function endProcessing(success, pageUrl) {
+  function endProcessing(success, pageUrl, skipped = false) {
     processing = false;
     urlInput.disabled = false;
     submitBtn.disabled = ws?.readyState !== WebSocket.OPEN;
@@ -372,7 +372,10 @@
     stopBtn.textContent = '停止';
 
     resultBanner.style.display = 'block';
-    if (success) {
+    if (success && skipped) {
+      resultBanner.className = 'success';
+      resultBanner.textContent = '⚠️ 论文已存在于 Notion，已跳过。';
+    } else if (success) {
       resultBanner.className = 'success';
       const link = pageUrl
         ? `<a href="${escAttr(pageUrl)}" target="_blank" rel="noopener">在 Notion 中查看 →</a>`

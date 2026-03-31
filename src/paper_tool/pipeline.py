@@ -128,6 +128,7 @@ def run_pipeline(
                         "status": "warn",
                     }
                 )
+                emit({"type": "done", "success": True, "skipped": True})
                 return True
 
             msg = (
@@ -144,6 +145,7 @@ def run_pipeline(
                         "status": "warn",
                     }
                 )
+                emit({"type": "done", "success": True, "skipped": True})
                 return True
 
             for page_id in existing_ids:
