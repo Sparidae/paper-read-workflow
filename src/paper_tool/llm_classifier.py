@@ -83,12 +83,18 @@ def _build_system_prompt(
     )
 
 
-def _build_user_prompt(metadata: PaperMetadata) -> str:
-    return f"""请对以下论文进行分类：
+def _build_user_prompt(metadata: PaperMetadata, first_page_text: str = "") -> str:
+    base = f"""请对以下论文进行分类：
 
 **标题**: {metadata.title}
 **作者**: {metadata.authors_str}
 **摘要**: {metadata.abstract}"""
+    if first_page_text.strip():
+        base += (
+            "\n\n**PDF 第一页完整文本**（含作者署名行和机构列表，请重点从中提取来源机构）："
+            f"\n{first_page_text.strip()}"
+        )
+    return base
 
 
 def _parse_response(raw: str, available: dict[str, list[str]]) -> Classification:
@@ -144,13 +150,14 @@ class LLMClassifier:
         self,
         metadata: PaperMetadata,
         available_options: dict[str, list[str]],
+        first_page_text: str = "",
         debug: bool = False,
         stream: bool = False,
         on_token: "Callable[[str], None] | None" = None,
     ) -> Classification:
         """
-        Classify paper using only metadata (title, abstract, authors).
-        Can propose new options when existing ones don't fit.
+        Classify paper using metadata (title, abstract, authors) and optionally
+        the first page PDF text for more accurate institution extraction.
 
         available_options: {"paper_type": [...], "research_areas": [...], "institutions": [...]}
         """
@@ -167,7 +174,7 @@ class LLMClassifier:
 
         classifier_template = self._cfg.classifier_prompt
         system_prompt = _build_system_prompt(available_options, classifier_template)
-        user_prompt = _build_user_prompt(metadata)
+        user_prompt = _build_user_prompt(metadata, first_page_text)
 
         _dbg("System Prompt", system_prompt)
         _dbg("User Prompt", user_prompt)

@@ -265,10 +265,21 @@ def run_pipeline(
         try:
             available_options = notion.get_classification_options()
             classifier = LLMClassifier()
+            from pathlib import Path as _Path
+
+            from paper_tool.pdf_parser import extract_first_page_text as _efpt
+
+            _first_page = ""
+            if metadata.pdf_path:
+                try:
+                    _first_page = _efpt(_Path(metadata.pdf_path))
+                except Exception:
+                    pass
             emit({"type": "llm_start", "title": "LLM 分类标注"})
             classification = classifier.classify(
                 metadata,
                 available_options,
+                first_page_text=_first_page,
                 debug=debug,
                 on_token=_on_token,
             )

@@ -65,6 +65,20 @@ def extract_text(pdf_path: Path, max_chars: int | None = None) -> str:
     return "\n\n[...]\n\n".join(sections)
 
 
+def extract_first_page_text(pdf_path: Path, max_chars: int = 3000) -> str:
+    """Extract raw text from the first page of a PDF (for affiliation parsing)."""
+    import fitz  # PyMuPDF
+
+    try:
+        doc = fitz.open(str(pdf_path))
+    except Exception:
+        return ""
+    if not doc:
+        return ""
+    text = doc[0].get_text()
+    return text[:max_chars] if len(text) > max_chars else text
+
+
 def extract_text_from_latex(tex_path: Path, max_chars: int | None = None) -> str:
     """
     Convert LaTeX source to plain text using pylatexenc.
