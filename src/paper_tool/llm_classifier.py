@@ -8,13 +8,17 @@ and can propose new options following the existing naming style.
 from __future__ import annotations
 
 import json
+import logging
 import re
+import traceback
 from typing import Callable
 
 from paper_tool.config import get_config
 from paper_tool.llm_stream import completion_to_text
 from paper_tool.models import Classification, PaperMetadata
 from paper_tool.retry import with_retry as _with_retry
+
+log = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT_TEMPLATE = """你是一位学术论文分类助手，负责为论文打标签。
 
@@ -161,9 +165,9 @@ class LLMClassifier:
 
         available_options: {"paper_type": [...], "research_areas": [...], "institutions": [...]}
         """
-        import traceback
 
         def _dbg(label: str, content: str = "") -> None:
+            log.debug("Classifier · %s\n%s", label, (content or "(empty)")[:5000])
             if not debug:
                 return
             sep = "-" * 60
@@ -215,23 +219,32 @@ class LLMClassifier:
                     base_delay=3.0,
                 )
             except Exception:
+                log.exception("Classifier LLM call failed (all retries exhausted)")
                 if debug:
                     _dbg("LLM Call FAILED (all retries exhausted)")
                     traceback.print_exc()
                 raise
 
             raw = response.text
+            finish_reason = response.finish_reason or (
+                "stream" if stream_enabled else "unknown"
+            )
+            usage = response.usage
+            usage_str = (
+                f"prompt={usage.prompt_tokens} completion={usage.completion_tokens} total={usage.total_tokens}"
+                if usage
+                else "N/A"
+            )
+            log.debug(
+                "Classifier response  attempt=%d  finish=%s  %s  raw=%d chars",
+                attempt,
+                finish_reason,
+                usage_str,
+                len(raw),
+            )
+            log.debug("Classifier raw response: %s", raw[:3000])
 
             if debug:
-                finish_reason = response.finish_reason or (
-                    "stream" if stream_enabled else "unknown"
-                )
-                usage = response.usage
-                usage_str = (
-                    f"prompt={usage.prompt_tokens} completion={usage.completion_tokens} total={usage.total_tokens}"
-                    if usage
-                    else "N/A"
-                )
                 _dbg(
                     f"Response Meta  attempt={attempt}  finish_reason={finish_reason}  usage={usage_str}"
                 )
@@ -241,6 +254,7 @@ class LLMClassifier:
                 return _parse_response(raw, available_options)
             except Exception as e:
                 last_exc = e
+                log.warning("Classifier parse failed (attempt %d): %s", attempt, e)
                 if debug:
                     _dbg(f"Parse FAILED (attempt {attempt})", str(e))
                     traceback.print_exc()

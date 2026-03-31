@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
@@ -10,6 +11,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.text import Text
+
+log = logging.getLogger(__name__)
 
 _URL_RE = re.compile(r"https?://[^\s,\"'\]>]+")
 _SUPPORTED_DOMAINS = frozenset(
@@ -58,6 +61,13 @@ app.add_typer(config_app, name="config")
 
 console = Console()
 error_console = Console(stderr=True, style="bold red")
+
+
+@app.callback()
+def _app_init() -> None:
+    from paper_tool.logging_setup import setup_logging
+
+    setup_logging()
 
 
 def _process_paper(
@@ -191,6 +201,9 @@ def add(
     ),
 ) -> None:
     """添加一篇论文：下载 PDF、写入 Notion、生成 AI 笔记。"""
+    log.info(
+        "CMD add  url=%s  skip_llm=%s  debug=%s  force=%s", url, skip_llm, debug, force
+    )
     success = _process_paper(
         url,
         skip_llm=skip_llm,
@@ -226,6 +239,12 @@ def batch(
     ),
 ) -> None:
     """批量添加论文（自动从文件中提取论文链接，支持 txt/csv/md 等任意格式）。"""
+    log.info(
+        "CMD batch  file=%s  skip_llm=%s  continue_on_error=%s",
+        file,
+        skip_llm,
+        continue_on_error,
+    )
     if not file.exists():
         error_console.print(f"[ERROR] 文件不存在: {file}")
         raise typer.Exit(code=1)

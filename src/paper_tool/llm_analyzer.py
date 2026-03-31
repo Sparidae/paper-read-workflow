@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import replace
 from typing import TYPE_CHECKING, Callable
@@ -15,6 +16,8 @@ from paper_tool.retry import with_retry as _with_retry
 
 if TYPE_CHECKING:
     pass
+
+log = logging.getLogger(__name__)
 
 
 _SYSTEM_PROMPT = """你是一位专业的学术论文分析助手，擅长深度理解和总结计算机科学、人工智能领域的研究论文。
@@ -240,6 +243,7 @@ class LLMAnalyzer:
         import traceback
 
         def _dbg(label: str, content: str = "") -> None:
+            log.debug("Analyzer · %s\n%s", label, (content or "(empty)")[:5000])
             if not debug:
                 return
             sep = "-" * 60
@@ -306,23 +310,31 @@ class LLMAnalyzer:
                 base_delay=3.0,
             )
         except Exception:
+            log.exception("Analyzer LLM call failed (all retries exhausted)")
             if debug:
                 _dbg("LLM Call FAILED (all retries exhausted)")
                 traceback.print_exc()
             raise
 
         raw = response.text
+        finish_reason = response.finish_reason or (
+            "stream" if stream_enabled else "unknown"
+        )
+        usage = response.usage
+        usage_str = (
+            f"prompt={usage.prompt_tokens} completion={usage.completion_tokens} total={usage.total_tokens}"
+            if usage
+            else "N/A"
+        )
+        log.debug(
+            "Analyzer response  finish=%s  %s  raw=%d chars",
+            finish_reason,
+            usage_str,
+            len(raw),
+        )
+        log.debug("Analyzer raw response: %s", raw[:3000])
 
         if debug:
-            finish_reason = response.finish_reason or (
-                "stream" if stream_enabled else "unknown"
-            )
-            usage = response.usage
-            usage_str = (
-                f"prompt={usage.prompt_tokens} completion={usage.completion_tokens} total={usage.total_tokens}"
-                if usage
-                else "N/A"
-            )
             _dbg(
                 f"Response Meta  finish_reason={finish_reason}  usage={usage_str}",
             )

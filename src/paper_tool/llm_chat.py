@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from paper_tool.config import get_config
 from paper_tool.llm_stream import completion_to_text
+
+log = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT_TEMPLATE = """\
 你是一位专业的学术论文问答助手，正在帮助研究者深入理解以下论文。
@@ -132,6 +135,11 @@ class ChatSession:
         if self._cfg.openai_base_url:
             kwargs["api_base"] = self._cfg.openai_base_url
 
+        log.debug(
+            "Chat ask  messages=%d  question=%s",
+            len(all_messages),
+            question[:200],
+        )
         if debug:
             print(
                 f"\n[DEBUG] 发送 {len(all_messages)} 条消息，最新问题: {question[:80]}",

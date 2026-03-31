@@ -18,7 +18,10 @@ Event schema
 
 from __future__ import annotations
 
+import logging
 from typing import Callable
+
+log = logging.getLogger(__name__)
 
 
 def run_pipeline(
@@ -53,14 +56,36 @@ def run_pipeline(
     from paper_tool.notion_service import NotionService
     from paper_tool.pdf_parser import extract_text
 
-    emit = on_event or (lambda _: None)
+    _raw_emit = on_event or (lambda _: None)
     confirm = on_confirm_force or (lambda _msg: True)
+
+    def emit(event: dict) -> None:
+        t = event.get("type", "")
+        if t == "stage_start":
+            log.info(">>> %s", event.get("label", ""))
+        elif t == "stage_done":
+            status = event.get("status", "ok")
+            level = logging.INFO if status == "ok" else logging.WARNING
+            log.log(level, "    ✓ %s [%s]", event.get("label", ""), status)
+        elif t == "error":
+            log.error("PIPELINE ERROR: %s", event.get("message", ""))
+        elif t == "done":
+            log.info("Pipeline done → %s", event.get("page_url", ""))
+        _raw_emit(event)
 
     def _on_token(text: str) -> None:
         emit({"type": "llm_token", "text": text})
 
     url = url.strip()
     cfg = get_config()
+    log.info(
+        "run_pipeline start  url=%s  skip_llm=%s  debug=%s  force=%s  model=%s",
+        url,
+        skip_llm,
+        debug,
+        force,
+        cfg.llm_model,
+    )
 
     # ── Step 1: Fetch metadata ─────────────────────────────────────────────
     emit(
@@ -78,6 +103,7 @@ def run_pipeline(
             }
         )
     except Exception as e:
+        log.exception("元数据获取失败: %s", e)
         emit({"type": "error", "message": f"元数据获取失败: {e}"})
         return False
 
@@ -140,6 +166,7 @@ def run_pipeline(
                 }
             )
     except Exception as e:
+        log.exception("Notion 重复检查失败: %s", e)
         emit({"type": "error", "message": f"Notion 重复检查失败: {e}"})
         return False
 
@@ -157,6 +184,7 @@ def run_pipeline(
             }
         )
     except Exception as e:
+        log.exception("PDF 下载失败: %s", e)
         emit({"type": "error", "message": f"PDF 下载失败: {e}"})
         return False
 
@@ -226,6 +254,7 @@ def run_pipeline(
                 }
             )
         except Exception as e:
+            log.exception("PDF 文本提取失败: %s", e)
             emit({"type": "error", "message": f"PDF 文本提取失败: {e}"})
             return False
 
@@ -250,6 +279,7 @@ def run_pipeline(
             }
         )
     except Exception as e:
+        log.exception("创建 Notion 页面失败: %s", e)
         emit({"type": "error", "message": f"创建 Notion 页面失败: {e}"})
         return False
 
@@ -607,6 +637,7 @@ def run_pipeline(
                     "status": "warn",
                 }
             )
+            log.exception("笔记写入失败: %s", e)
             emit({"type": "error", "message": f"笔记写入失败: {e}"})
             return False
     elif has_visuals:
@@ -637,6 +668,7 @@ def run_pipeline(
                     "status": "warn",
                 }
             )
+            log.exception("图表上传失败: %s", e)
             emit({"type": "error", "message": f"图表上传失败: {e}"})
             return False
 

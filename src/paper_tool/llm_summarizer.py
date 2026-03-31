@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import traceback
 from typing import Callable
 
@@ -9,6 +10,8 @@ from paper_tool.config import get_config
 from paper_tool.llm_stream import completion_to_text
 from paper_tool.models import PaperMetadata
 from paper_tool.retry import with_retry as _with_retry
+
+log = logging.getLogger(__name__)
 
 _DEFAULT_SYSTEM_PROMPT = """你是一位精通学术写作的计算机科学专家，擅长将复杂的论文摘要浓缩为信息密度极高的一句话。
 
@@ -46,6 +49,7 @@ class LLMSummarizer:
         """
 
         def _dbg(label: str, content: str = "") -> None:
+            log.debug("Summarizer · %s\n%s", label, (content or "(empty)")[:5000])
             if not debug:
                 return
             sep = "-" * 60
@@ -86,23 +90,31 @@ class LLMSummarizer:
                 base_delay=3.0,
             )
         except Exception:
+            log.exception("Summarizer LLM call failed (all retries exhausted)")
             if debug:
                 _dbg("LLM Call FAILED (all retries exhausted)")
                 traceback.print_exc()
             raise
 
         raw = result.text
+        finish_reason = result.finish_reason or (
+            "stream" if stream_enabled else "unknown"
+        )
+        usage = result.usage
+        usage_str = (
+            f"prompt={usage.prompt_tokens} completion={usage.completion_tokens} total={usage.total_tokens}"
+            if usage
+            else "N/A"
+        )
+        log.debug(
+            "Summarizer response  finish=%s  %s  raw=%d chars",
+            finish_reason,
+            usage_str,
+            len(raw),
+        )
+        log.debug("Summarizer raw response: %s", raw[:3000])
 
         if debug:
-            finish_reason = result.finish_reason or (
-                "stream" if stream_enabled else "unknown"
-            )
-            usage = result.usage
-            usage_str = (
-                f"prompt={usage.prompt_tokens} completion={usage.completion_tokens} total={usage.total_tokens}"
-                if usage
-                else "N/A"
-            )
             _dbg(f"Response Meta  finish_reason={finish_reason}  usage={usage_str}")
             _dbg(f"Raw Response ({len(raw)} chars)", raw)
 
