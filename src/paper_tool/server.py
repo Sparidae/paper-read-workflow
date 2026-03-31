@@ -11,6 +11,10 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from paper_tool.logging_setup import setup_logging
+
+setup_logging()
+
 STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(title="paper-tool")
