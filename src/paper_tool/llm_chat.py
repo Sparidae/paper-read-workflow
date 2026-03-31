@@ -135,7 +135,7 @@ class ChatSession:
         if self._cfg.openai_base_url:
             kwargs["api_base"] = self._cfg.openai_base_url
 
-        log.debug(
+        log.info(
             "Chat ask  messages=%d  question=%s",
             len(all_messages),
             question[:200],

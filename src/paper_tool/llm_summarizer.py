@@ -106,13 +106,12 @@ class LLMSummarizer:
             if usage
             else "N/A"
         )
-        log.debug(
+        log.info(
             "Summarizer response  finish=%s  %s  raw=%d chars",
             finish_reason,
             usage_str,
             len(raw),
         )
-        log.debug("Summarizer raw response: %s", raw[:3000])
 
         if debug:
             _dbg(f"Response Meta  finish_reason={finish_reason}  usage={usage_str}")

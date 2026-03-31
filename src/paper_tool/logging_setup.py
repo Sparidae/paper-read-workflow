@@ -75,7 +75,7 @@ def setup_logging(log_dir: Path | None = None, keep_days: int = 30) -> None:
         encoding="utf-8",
     )
     handler.setFormatter(fmt)
-    handler.setLevel(logging.DEBUG)
+    handler.setLevel(logging.INFO)
 
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)

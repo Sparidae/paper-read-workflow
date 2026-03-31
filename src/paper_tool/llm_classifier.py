@@ -235,14 +235,13 @@ class LLMClassifier:
                 if usage
                 else "N/A"
             )
-            log.debug(
+            log.info(
                 "Classifier response  attempt=%d  finish=%s  %s  raw=%d chars",
                 attempt,
                 finish_reason,
                 usage_str,
                 len(raw),
             )
-            log.debug("Classifier raw response: %s", raw[:3000])
 
             if debug:
                 _dbg(

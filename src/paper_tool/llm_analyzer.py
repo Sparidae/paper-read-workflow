@@ -326,13 +326,12 @@ class LLMAnalyzer:
             if usage
             else "N/A"
         )
-        log.debug(
+        log.info(
             "Analyzer response  finish=%s  %s  raw=%d chars",
             finish_reason,
             usage_str,
             len(raw),
         )
-        log.debug("Analyzer raw response: %s", raw[:3000])
 
         if debug:
             _dbg(
