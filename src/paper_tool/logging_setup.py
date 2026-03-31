@@ -82,7 +82,7 @@ def setup_logging(log_dir: Path | None = None, keep_days: int = 30) -> None:
     root.addHandler(handler)
 
     # Suppress noisy third-party loggers
-    for noisy in ("httpx", "httpcore", "urllib3", "notion_client"):
+    for noisy in ("httpx", "httpcore", "urllib3", "notion_client", "LiteLLM"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     log = logging.getLogger(__name__)
