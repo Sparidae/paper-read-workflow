@@ -77,13 +77,13 @@ def setup_logging(log_dir: Path | None = None, keep_days: int = 30) -> None:
     handler.setFormatter(fmt)
     handler.setLevel(logging.INFO)
 
-    root = logging.getLogger()
-    root.setLevel(logging.DEBUG)
-    root.addHandler(handler)
-
-    # Suppress noisy third-party loggers
-    for noisy in ("httpx", "httpcore", "urllib3", "notion_client"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+    # Only attach handler to our own namespace — avoids pulling in
+    # every third-party DEBUG message (LiteLLM, httpx, etc.) that
+    # would otherwise flood the terminal via their own StreamHandlers
+    # when the root logger level is lowered.
+    pkg_logger = logging.getLogger("paper_tool")
+    pkg_logger.setLevel(logging.DEBUG)
+    pkg_logger.addHandler(handler)
 
     log = logging.getLogger(__name__)
     log.debug("Logging initialised → %s", log_file)
