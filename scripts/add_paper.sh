@@ -14,7 +14,7 @@
 
 # ── 配置项（修改为你的服务器信息） ────────────────────────
 SERVER="your-server"                  # SSH 配置名（~/.ssh/config 中的 Host）或 user@host
-PROJECT_DIR="~/paper_list"           # 服务器上 paper-tool 项目的路径
+PROJECT_DIR="~/projects/paper_list"  # 服务器上 paper-tool 项目的路径
 # ────────────────────────────────────────────────────────────
 
 set -euo pipefail
