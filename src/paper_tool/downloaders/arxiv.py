@@ -58,6 +58,90 @@ def _safe_member_relpath(name: str) -> Path | None:
     return Path(*parts)
 
 
+def _normalize_tex_path(raw_path: str, base_dir: Path) -> Path:
+    """Normalize an input/include path relative to the current tex file."""
+    candidate = Path(raw_path.strip())
+    if candidate.suffix != ".tex":
+        candidate = candidate.with_suffix(".tex")
+
+    normalized_parts: list[str] = []
+    for part in (base_dir / candidate).parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if normalized_parts:
+                normalized_parts.pop()
+            continue
+        normalized_parts.append(part)
+    return Path(*normalized_parts)
+
+
+def _pick_root_tex(tex_files: dict[Path, str]) -> Path | None:
+    """Pick the most likely root tex file for expansion."""
+    candidates: list[Path] = []
+    for path, content in tex_files.items():
+        if "\\documentclass" in content and "\\begin{document}" in content:
+            candidates.append(path)
+    if not candidates:
+        return None
+
+    preferred_names = {"main.tex": 0, "paper.tex": 1}
+    return min(
+        candidates,
+        key=lambda path: (
+            preferred_names.get(path.name.lower(), 2),
+            len(path.parts),
+            len(path.as_posix()),
+            path.as_posix(),
+        ),
+    )
+
+
+def _expand_tex_includes(
+    path: Path,
+    tex_files: dict[Path, str],
+    visited: set[Path] | None = None,
+) -> str:
+    """Expand input/include statements recursively in document order."""
+    if visited is None:
+        visited = set()
+    if path in visited:
+        return ""
+
+    content = tex_files.get(path)
+    if content is None:
+        return ""
+
+    visited.add(path)
+    include_re = re.compile(
+        r"^(?P<prefix>[^%]*?)\\(?P<cmd>input|include)\{(?P<target>[^{}]+)\}"
+    )
+    expanded_lines: list[str] = []
+
+    for line in content.splitlines():
+        match = include_re.match(line)
+        if not match:
+            expanded_lines.append(line)
+            continue
+
+        target_path = _normalize_tex_path(match.group("target"), path.parent)
+        nested = tex_files.get(target_path)
+        if nested is None:
+            expanded_lines.append(line)
+            continue
+
+        prefix = match.group("prefix")
+        if prefix.strip():
+            expanded_lines.append(line)
+            continue
+
+        expanded_lines.append(f"% --- begin include: {target_path.as_posix()} ---")
+        expanded_lines.append(_expand_tex_includes(target_path, tex_files, visited))
+        expanded_lines.append(f"% --- end include: {target_path.as_posix()} ---")
+
+    return "\n".join(expanded_lines)
+
+
 class ArxivDownloader(BaseDownloader):
     """Downloads papers from arxiv.org using the arxiv Python package."""
 
@@ -131,7 +215,7 @@ class ArxivDownloader(BaseDownloader):
         )
 
     def download_pdf(self, metadata: PaperMetadata, dest_dir: Path) -> Path:
-        """Download PDF via direct URL construction (faster than arxiv package download)."""
+        """Download PDF via direct URL construction."""
         paper_dir = _paper_dir(metadata, dest_dir)
         dest_path = paper_dir / "paper.pdf"
 
@@ -209,6 +293,7 @@ class ArxivDownloader(BaseDownloader):
                 try:
                     with tarfile.open(tar_path) as tar:
                         tex_contents: list[str] = []
+                        tex_files: dict[Path, str] = {}
                         figures_dir.mkdir(parents=True, exist_ok=True)
                         source_dir.mkdir(parents=True, exist_ok=True)
 
@@ -237,9 +322,9 @@ class ArxivDownloader(BaseDownloader):
 
                             if member.name.endswith(".tex"):
                                 try:
-                                    tex_contents.append(
-                                        content.decode("utf-8", errors="replace")
-                                    )
+                                    decoded = content.decode("utf-8", errors="replace")
+                                    tex_contents.append(decoded)
+                                    tex_files[rel_path] = decoded
                                 except Exception:
                                     pass
 
@@ -247,7 +332,7 @@ class ArxivDownloader(BaseDownloader):
                                 suffix in _IMG_SUFFIXES
                                 and member.size <= _MAX_IMG_BYTES
                             ):
-                                # Flatten: save only the filename, drop subdirectory path
+                                # Flatten filename and drop subdirectory path.
                                 fname = Path(member.name).name
                                 out_path = figures_dir / fname
                                 if not out_path.exists():
@@ -258,9 +343,19 @@ class ArxivDownloader(BaseDownloader):
 
                         if not tex_contents:
                             return None
-                        merged_path.write_text(
-                            "\n\n% --- next file ---\n\n".join(tex_contents)
+
+                        root_tex = _pick_root_tex(tex_files)
+                        merged_tex = (
+                            _expand_tex_includes(root_tex, tex_files)
+                            if root_tex is not None
+                            else ""
                         )
+                        if not merged_tex.strip():
+                            merged_tex = "\n\n% --- next file ---\n\n".join(
+                                tex_contents
+                            )
+
+                        merged_path.write_text(merged_tex)
                 finally:
                     tar_path.unlink(missing_ok=True)
 
