@@ -543,7 +543,7 @@ class NotionService:
     def update_classifications(
         self, page_id: str, classification: Classification
     ) -> None:
-        """Write classification tags (paper_type, research_areas, institutions) to page properties."""
+        """Write classification tags to page properties."""
         props = self._props
         prop_updates: dict[str, Any] = {}
 
@@ -646,13 +646,8 @@ class NotionService:
         return None
 
     def _figure_blocks(self, fig: FigureInfo, upload_id: str) -> list[dict]:
-        """Build the Notion blocks for a single figure or table (heading + image with caption)."""
-        prefix = "Table" if fig.kind == "table" else "Figure"
-        label = f"{prefix} {fig.number}"
-        if fig.label:
-            label += f"  ({fig.label})"
+        """Build image blocks for one figure or table."""
         return [
-            _heading3_block(label),
             {
                 "object": "block",
                 "type": "image",
@@ -763,10 +758,8 @@ class NotionService:
         """
         Upload figures and append them to the Notion page as image blocks.
 
-        Each figure becomes:
-          - A heading_3 block: "Figure N"
-          - An image block (Notion-hosted via file_upload)
-          - A paragraph block with the caption (if any)
+        Keeps the section heading, then inserts each figure as an image block
+        with its caption attached on the image block itself.
 
         Returns the number of figures successfully uploaded.
         """
@@ -783,11 +776,6 @@ class NotionService:
             file_upload_id = self._upload_file(fig.image_path)
             if file_upload_id is None:
                 continue
-
-            label = f"Figure {fig.number}"
-            if fig.label:
-                label += f"  ({fig.label})"
-            blocks.append(_heading3_block(label))
 
             blocks.append(
                 {
