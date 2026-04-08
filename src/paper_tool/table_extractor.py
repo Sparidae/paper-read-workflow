@@ -1,11 +1,10 @@
-r"""Extract and render paper tables from arXiv LaTeX source.
+r"""Extract paper tables from arXiv LaTeX source.
 
 Rendering pipeline:
-  1. Keep the original table-local LaTeX styling (e.g. ``\small``,
-     ``\centering``, ``\resizebox``).
-  2. Compile a minimal standalone LaTeX document with pdflatex.
-  3. Rasterise the resulting PDF page with PyMuPDF.
-  4. If LaTeX rendering fails, write debug files and fall back to matplotlib.
+  1. Extract table metadata from the merged LaTeX source.
+  2. Prefer cropping the already-typeset table from the paper PDF.
+  3. Fall back to standalone LaTeX rendering when PDF cropping fails.
+  4. Fall back to a simpler matplotlib redraw as the last resort.
 """
 
 from __future__ import annotations
@@ -345,6 +344,193 @@ def _read_status_renderer(debug_dir: Path, stem: str) -> str:
     return ""
 
 
+def _resolve_pdf_path(tex_path: Path) -> Path | None:
+    for name in ("paper.pdf", f"{tex_path.parent.name}.pdf"):
+        candidate = tex_path.parent / name
+        if candidate.exists():
+            return candidate
+    pdfs = sorted(tex_path.parent.glob("*.pdf"))
+    return pdfs[0] if pdfs else None
+
+
+def _normalize_text(text: str) -> str:
+    text = re.sub(r"\s+", " ", text).strip().lower()
+    return re.sub(r"[^\w\s.%()\-]", "", text)
+
+
+def _caption_keywords(caption: str, limit: int = 8) -> list[str]:
+    words = [
+        word
+        for word in re.findall(r"[A-Za-z0-9%.-]+", _normalize_text(caption))
+        if len(word) >= 3
+    ]
+    return words[:limit]
+
+
+def _find_caption_block(doc, table_number: int, caption: str):
+    needle = f"table {table_number}"
+    keywords = _caption_keywords(caption)
+    best = None
+    for page_index, page in enumerate(doc):
+        for block in page.get_text("blocks"):
+            x0, y0, x1, y1, text, *_ = block
+            norm = _normalize_text(text)
+            score = 0
+            if needle in norm:
+                score += 10
+            score += sum(1 for kw in keywords if kw in norm)
+            if score and (best is None or score > best[0]):
+                best = (score, page_index, (x0, y0, x1, y1), text)
+    return best
+
+
+def _estimate_table_crop(page, caption_rect, *, search_above: bool = True):
+    import fitz
+
+    page_rect = page.rect
+    if search_above:
+        vertical_window = fitz.Rect(
+            0,
+            max(page_rect.y0, caption_rect.y0 - page_rect.height * 0.6),
+            page_rect.x1,
+            caption_rect.y0,
+        )
+    else:
+        vertical_window = fitz.Rect(
+            0,
+            caption_rect.y1,
+            page_rect.x1,
+            min(page_rect.y1, caption_rect.y1 + page_rect.height * 0.6),
+        )
+
+    rects = []
+    for drawing in page.get_drawings():
+        rect = drawing.get("rect")
+        if rect and rect.intersects(vertical_window):
+            rects.append(rect)
+
+    for x0, y0, x1, y1, text, *_ in page.get_text("blocks"):
+        rect = fitz.Rect(x0, y0, x1, y1)
+        if rect.intersects(vertical_window) and _normalize_text(text):
+            rects.append(rect)
+
+    if not rects:
+        return None
+
+    crop = fitz.Rect(rects[0])
+    for rect in rects[1:]:
+        crop |= rect
+    return crop
+
+
+def _refine_crop_rect(page, crop_rect, caption_rect):
+    import fitz
+
+    rect = fitz.Rect(crop_rect)
+    if rect.intersects(caption_rect):
+        if caption_rect.y0 >= rect.y0:
+            rect.y1 = min(rect.y1, caption_rect.y0 - 2)
+        else:
+            rect.y0 = max(rect.y0, caption_rect.y1 + 2)
+
+    rect.x0 = max(page.rect.x0, rect.x0 - 6)
+    rect.y0 = max(page.rect.y0, rect.y0 - 6)
+    rect.x1 = min(page.rect.x1, rect.x1 + 6)
+    rect.y1 = min(page.rect.y1, rect.y1 + 6)
+    if rect.width <= 40 or rect.height <= 40:
+        return None
+    return rect
+
+
+def _render_pdf_crop(page, crop_rect, output_path: Path, zoom: float = 3.0) -> bool:
+    import fitz
+
+    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=crop_rect, alpha=False)
+    if pix.width < 80 or pix.height < 80:
+        return False
+    pix.save(str(output_path))
+    return True
+
+
+def _looks_like_valid_table_image(image_path: Path) -> bool:
+    import numpy as np
+    from PIL import Image
+
+    img = Image.open(str(image_path)).convert("L")
+    arr = np.array(img)
+    if arr.size == 0:
+        return False
+    dark_ratio = float((arr < 245).mean())
+    return 0.01 <= dark_ratio <= 0.60
+
+
+def _render_table_from_pdf(
+    pdf_path: Path,
+    table_number: int,
+    caption: str,
+    output_path: Path,
+    debug_dir: Path | None = None,
+    stem: str = "table",
+) -> bool:
+    import fitz
+
+    with fitz.open(str(pdf_path)) as doc:
+        match = _find_caption_block(doc, table_number, caption)
+        if not match:
+            if debug_dir is not None:
+                _write_status(
+                    debug_dir,
+                    stem,
+                    renderer="pdf_crop_failed",
+                    note="caption_not_found",
+                )
+            return False
+
+        _, page_index, rect_tuple, _ = match
+        page = doc[page_index]
+        caption_rect = fitz.Rect(rect_tuple)
+
+        crop_rect = _estimate_table_crop(page, caption_rect, search_above=True)
+        if crop_rect is None:
+            crop_rect = _estimate_table_crop(page, caption_rect, search_above=False)
+        if crop_rect is None:
+            if debug_dir is not None:
+                _write_status(
+                    debug_dir,
+                    stem,
+                    renderer="pdf_crop_failed",
+                    note="table_region_not_found",
+                )
+            return False
+
+        crop_rect = _refine_crop_rect(page, crop_rect, caption_rect)
+        if crop_rect is None or not _render_pdf_crop(page, crop_rect, output_path):
+            if debug_dir is not None:
+                _write_status(
+                    debug_dir,
+                    stem,
+                    renderer="pdf_crop_failed",
+                    note="invalid_crop_rect",
+                )
+            return False
+
+    if not _looks_like_valid_table_image(output_path):
+        output_path.unlink(missing_ok=True)
+        if debug_dir is not None:
+            _write_status(
+                debug_dir,
+                stem,
+                renderer="pdf_crop_failed",
+                note="image_quality_check_failed",
+            )
+        return False
+
+    _trim_whitespace(output_path, padding=8)
+    if debug_dir is not None:
+        _write_status(debug_dir, stem, renderer="pdf_crop")
+    return True
+
+
 # ── LaTeX rendering ───────────────────────────────────────────────────────────
 
 
@@ -536,23 +722,23 @@ def _render_table_matplotlib(
         data = norm[1:] if len(norm) > 1 else [[""] * n_cols]
 
         fig_w = max(5.0, n_cols * 1.8)
-        fig_h = max(1.0, (len(data) + 1) * 0.40 + 0.2)
+        fig_h = max(1.2, (len(data) + 1) * 0.48 + 0.3)
         fig, ax = plt.subplots(figsize=(fig_w, fig_h))
         ax.axis("off")
 
         tbl = ax.table(cellText=data, colLabels=header, loc="center", cellLoc="center")
         tbl.auto_set_font_size(False)
-        tbl.set_fontsize(9)
+        tbl.set_fontsize(10)
+        tbl.scale(1.0, 1.18)
         tbl.auto_set_column_width(list(range(n_cols)))
 
         cells_dict = tbl.get_celld()
         for (row, col), cell in cells_dict.items():
             cell.set_linewidth(0)
+            cell.set_edgecolor("white")
+            cell.set_facecolor("white")
             if row == 0:
-                cell.set_facecolor("#F0F0F0")
                 cell.set_text_props(weight="bold")
-            else:
-                cell.set_facecolor("white")
 
         fig.canvas.draw()
         renderer = fig.canvas.get_renderer()
@@ -641,6 +827,7 @@ def parse_tables(
     preamble_macros = _extract_preamble_macros(tex)
     renew_stubs = _extract_renewcommand_stubs(tex)
     text_width = _detect_textwidth(tex)
+    pdf_path = _resolve_pdf_path(tex_path)
 
     results: list[FigureInfo] = []
     tbl_number = 0
@@ -669,15 +856,32 @@ def parse_tables(
         else:
             output_path.unlink(missing_ok=True)
 
-            ok = _render_table_latex(
-                table_body or tabular_raw,
-                output_path,
-                preamble_macros,
-                renew_stubs=renew_stubs,
-                text_width=text_width,
-                debug_dir=debug_dir,
-                stem=stem,
-            )
+            ok = False
+            if pdf_path is not None:
+                ok = _render_table_from_pdf(
+                    pdf_path,
+                    tbl_number,
+                    caption,
+                    output_path,
+                    debug_dir=debug_dir,
+                    stem=stem,
+                )
+                if ok:
+                    render_backend = "pdf_crop"
+
+            if not ok:
+                ok = _render_table_latex(
+                    table_body or tabular_raw,
+                    output_path,
+                    preamble_macros,
+                    renew_stubs=renew_stubs,
+                    text_width=text_width,
+                    debug_dir=debug_dir,
+                    stem=stem,
+                )
+                if ok:
+                    render_backend = "latex"
+
             if not ok:
                 rows = _parse_tabular_rows(env_text)
                 ok = _render_table_matplotlib(
@@ -689,11 +893,10 @@ def parse_tables(
                 if ok:
                     _write_text(
                         debug_dir / f"{stem}.fallback.txt",
-                        "latex_failed -> matplotlib\n",
+                        "pdf_crop_failed_or_latex_failed -> matplotlib\n",
                     )
                     render_backend = "matplotlib"
-            else:
-                render_backend = "latex"
+
             if not ok:
                 tbl_number -= 1
                 continue
