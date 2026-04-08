@@ -1,11 +1,9 @@
-r"""Extract and render paper tables from arXiv LaTeX source.
+r"""Extract paper tables from arXiv LaTeX source.
 
 Rendering pipeline:
-  1. Keep the original table-local LaTeX styling (e.g. ``\small``,
-     ``\centering``, ``\resizebox``).
-  2. Compile a minimal standalone LaTeX document with pdflatex.
-  3. Rasterise the resulting PDF page with PyMuPDF.
-  4. If LaTeX rendering fails, write debug files and fall back to matplotlib.
+  1. Extract table metadata from the merged LaTeX source.
+  2. Prefer standalone LaTeX rendering to preserve table semantics/style.
+  3. Fall back to a simpler matplotlib redraw as the last resort.
 """
 
 from __future__ import annotations
@@ -311,16 +309,37 @@ def _remove_command_calls(text: str, command: str) -> str:
     return "".join(parts)
 
 
+def _strip_wrapper_commands(text: str, commands: tuple[str, ...]) -> str:
+    body = text
+    for command in commands:
+        body = _remove_command_calls(body, command)
+    return body
+
+
 def _prepare_table_body(env_text: str) -> str:
     r"""
     Keep the original table-local styling commands and tabular env, but strip
     float-only metadata like ``\caption`` / ``\label``.
     """
-    body = env_text
-    body = _remove_command_calls(body, "caption")
-    body = _remove_command_calls(body, "caption*")
-    body = _remove_command_calls(body, "label")
+    body = _strip_wrapper_commands(env_text, ("caption", "caption*", "label"))
     return body.strip()
+
+
+def _prepare_table_body_retry(env_text: str) -> str:
+    r"""Build a safer standalone variant without changing table semantics."""
+    body = _prepare_table_body(env_text)
+    body = _strip_wrapper_commands(
+        body,
+        (
+            "resizebox",
+            "scalebox",
+            "adjustbox",
+        ),
+    )
+    body = re.sub(r"\\begin\{center\}", "", body)
+    body = re.sub(r"\\end\{center\}", "", body)
+    body = re.sub(r"\\centering\b", "", body)
+    return re.sub(r"\n{3,}", "\n\n", body).strip()
 
 
 def _write_text(path: Path, content: str) -> None:
@@ -345,39 +364,14 @@ def _read_status_renderer(debug_dir: Path, stem: str) -> str:
     return ""
 
 
-# ── LaTeX rendering ───────────────────────────────────────────────────────────
-
-
-def _render_table_latex(
-    table_body: str,
+def _render_table_latex_source(
+    tex_src: str,
     output_path: Path,
-    preamble_macros: str = "",
     *,
-    renew_stubs: str = "",
-    text_width: str = "6.50in",
     debug_dir: Path | None = None,
     stem: str = "table",
+    status_note: str = "",
 ) -> bool:
-    """
-    Compile `table_body` as a standalone LaTeX document and rasterise to PNG.
-
-    Returns True on success, False on any failure (missing pdflatex,
-    compilation error, empty PDF, …).
-    """
-    if not shutil.which("pdflatex"):
-        if debug_dir is not None:
-            _write_status(
-                debug_dir, stem, renderer="latex_failed", note="pdflatex_not_found"
-            )
-        return False
-
-    tex_src = (
-        _LATEX_TEMPLATE.replace("@@RENEW_STUBS@@", renew_stubs)
-        .replace("@@PREAMBLE_MACROS@@", preamble_macros)
-        .replace("@@TABLE_BODY@@", table_body)
-        .replace("@@TEXT_WIDTH@@", text_width)
-    )
-
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -412,7 +406,10 @@ def _render_table_latex(
                     if log_file.exists():
                         shutil.copy2(log_file, debug_dir / f"{stem}.latex.log")
                     _write_status(
-                        debug_dir, stem, renderer="latex_failed", note="compile_error"
+                        debug_dir,
+                        stem,
+                        renderer="latex_failed",
+                        note=status_note or "compile_error",
                     )
                 return False
 
@@ -423,7 +420,10 @@ def _render_table_latex(
                 doc.close()
                 if debug_dir is not None:
                     _write_status(
-                        debug_dir, stem, renderer="latex_failed", note="empty_pdf"
+                        debug_dir,
+                        stem,
+                        renderer="latex_failed",
+                        note=status_note or "empty_pdf",
                     )
                 return False
 
@@ -439,9 +439,59 @@ def _render_table_latex(
         if debug_dir is not None:
             _write_text(debug_dir / f"{stem}.latex.tex", tex_src)
             _write_status(
-                debug_dir, stem, renderer="latex_failed", note="python_exception"
+                debug_dir,
+                stem,
+                renderer="latex_failed",
+                note=status_note or "python_exception",
             )
         return False
+
+
+def _render_table_latex(
+    table_body: str,
+    output_path: Path,
+    preamble_macros: str = "",
+    *,
+    renew_stubs: str = "",
+    text_width: str = "6.50in",
+    debug_dir: Path | None = None,
+    stem: str = "table",
+    retry_table_body: str | None = None,
+) -> bool:
+    """
+    Compile `table_body` as a standalone LaTeX document and rasterise to PNG.
+
+    Returns True on success, False on any failure (missing pdflatex,
+    compilation error, empty PDF, …).
+    """
+    if not shutil.which("pdflatex"):
+        if debug_dir is not None:
+            _write_status(
+                debug_dir, stem, renderer="latex_failed", note="pdflatex_not_found"
+            )
+        return False
+
+    attempts = [(table_body, "compile_error")]
+    if retry_table_body and retry_table_body.strip() and retry_table_body != table_body:
+        attempts.append((retry_table_body, "compile_error_retry"))
+
+    for current_body, status_note in attempts:
+        tex_src = (
+            _LATEX_TEMPLATE.replace("@@RENEW_STUBS@@", renew_stubs)
+            .replace("@@PREAMBLE_MACROS@@", preamble_macros)
+            .replace("@@TABLE_BODY@@", current_body)
+            .replace("@@TEXT_WIDTH@@", text_width)
+        )
+        if _render_table_latex_source(
+            tex_src,
+            output_path,
+            debug_dir=debug_dir,
+            stem=stem,
+            status_note=status_note,
+        ):
+            return True
+
+    return False
 
 
 # ── matplotlib fallback ───────────────────────────────────────────────────────
@@ -536,23 +586,23 @@ def _render_table_matplotlib(
         data = norm[1:] if len(norm) > 1 else [[""] * n_cols]
 
         fig_w = max(5.0, n_cols * 1.8)
-        fig_h = max(1.0, (len(data) + 1) * 0.40 + 0.2)
+        fig_h = max(1.2, (len(data) + 1) * 0.48 + 0.3)
         fig, ax = plt.subplots(figsize=(fig_w, fig_h))
         ax.axis("off")
 
         tbl = ax.table(cellText=data, colLabels=header, loc="center", cellLoc="center")
         tbl.auto_set_font_size(False)
-        tbl.set_fontsize(9)
+        tbl.set_fontsize(10)
+        tbl.scale(1.0, 1.18)
         tbl.auto_set_column_width(list(range(n_cols)))
 
         cells_dict = tbl.get_celld()
         for (row, col), cell in cells_dict.items():
             cell.set_linewidth(0)
+            cell.set_edgecolor("white")
+            cell.set_facecolor("white")
             if row == 0:
-                cell.set_facecolor("#F0F0F0")
                 cell.set_text_props(weight="bold")
-            else:
-                cell.set_facecolor("white")
 
         fig.canvas.draw()
         renderer = fig.canvas.get_renderer()
@@ -657,6 +707,7 @@ def parse_tables(
         label_m = _LABEL.search(env_text)
         label = label_m.group(1) if label_m else ""
         table_body = _prepare_table_body(env_text)
+        retry_table_body = _prepare_table_body_retry(env_text)
         tabular_raw = tab_full.group(1)
 
         tbl_number += 1
@@ -677,7 +728,11 @@ def parse_tables(
                 text_width=text_width,
                 debug_dir=debug_dir,
                 stem=stem,
+                retry_table_body=retry_table_body or tabular_raw,
             )
+            if ok:
+                render_backend = "latex"
+
             if not ok:
                 rows = _parse_tabular_rows(env_text)
                 ok = _render_table_matplotlib(
@@ -692,8 +747,7 @@ def parse_tables(
                         "latex_failed -> matplotlib\n",
                     )
                     render_backend = "matplotlib"
-            else:
-                render_backend = "latex"
+
             if not ok:
                 tbl_number -= 1
                 continue
