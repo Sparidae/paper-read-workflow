@@ -2,9 +2,8 @@ r"""Extract paper tables from arXiv LaTeX source.
 
 Rendering pipeline:
   1. Extract table metadata from the merged LaTeX source.
-  2. Prefer cropping the already-typeset table from the paper PDF.
-  3. Fall back to standalone LaTeX rendering when PDF cropping fails.
-  4. Fall back to a simpler matplotlib redraw as the last resort.
+  2. Prefer standalone LaTeX rendering to preserve table semantics/style.
+  3. Fall back to a simpler matplotlib redraw as the last resort.
 """
 
 from __future__ import annotations
@@ -310,16 +309,37 @@ def _remove_command_calls(text: str, command: str) -> str:
     return "".join(parts)
 
 
+def _strip_wrapper_commands(text: str, commands: tuple[str, ...]) -> str:
+    body = text
+    for command in commands:
+        body = _remove_command_calls(body, command)
+    return body
+
+
 def _prepare_table_body(env_text: str) -> str:
     r"""
     Keep the original table-local styling commands and tabular env, but strip
     float-only metadata like ``\caption`` / ``\label``.
     """
-    body = env_text
-    body = _remove_command_calls(body, "caption")
-    body = _remove_command_calls(body, "caption*")
-    body = _remove_command_calls(body, "label")
+    body = _strip_wrapper_commands(env_text, ("caption", "caption*", "label"))
     return body.strip()
+
+
+def _prepare_table_body_retry(env_text: str) -> str:
+    r"""Build a safer standalone variant without changing table semantics."""
+    body = _prepare_table_body(env_text)
+    body = _strip_wrapper_commands(
+        body,
+        (
+            "resizebox",
+            "scalebox",
+            "adjustbox",
+        ),
+    )
+    body = re.sub(r"\\begin\{center\}", "", body)
+    body = re.sub(r"\\end\{center\}", "", body)
+    body = re.sub(r"\\centering\b", "", body)
+    return re.sub(r"\n{3,}", "\n\n", body).strip()
 
 
 def _write_text(path: Path, content: str) -> None:
@@ -344,226 +364,14 @@ def _read_status_renderer(debug_dir: Path, stem: str) -> str:
     return ""
 
 
-def _resolve_pdf_path(tex_path: Path) -> Path | None:
-    for name in ("paper.pdf", f"{tex_path.parent.name}.pdf"):
-        candidate = tex_path.parent / name
-        if candidate.exists():
-            return candidate
-    pdfs = sorted(tex_path.parent.glob("*.pdf"))
-    return pdfs[0] if pdfs else None
-
-
-def _normalize_text(text: str) -> str:
-    text = re.sub(r"\s+", " ", text).strip().lower()
-    return re.sub(r"[^\w\s.%()\-]", "", text)
-
-
-def _caption_keywords(caption: str, limit: int = 8) -> list[str]:
-    words = [
-        word
-        for word in re.findall(r"[A-Za-z0-9%.-]+", _normalize_text(caption))
-        if len(word) >= 3
-    ]
-    return words[:limit]
-
-
-def _find_caption_block(doc, table_number: int, caption: str):
-    needle = f"table {table_number}"
-    keywords = _caption_keywords(caption)
-    best = None
-    for page_index, page in enumerate(doc):
-        for block in page.get_text("blocks"):
-            x0, y0, x1, y1, text, *_ = block
-            norm = _normalize_text(text)
-            score = 0
-            if needle in norm:
-                score += 10
-            score += sum(1 for kw in keywords if kw in norm)
-            if score and (best is None or score > best[0]):
-                best = (score, page_index, (x0, y0, x1, y1), text)
-    return best
-
-
-def _estimate_table_crop(page, caption_rect, *, search_above: bool = True):
-    import fitz
-
-    page_rect = page.rect
-    if search_above:
-        vertical_window = fitz.Rect(
-            0,
-            max(page_rect.y0, caption_rect.y0 - page_rect.height * 0.6),
-            page_rect.x1,
-            caption_rect.y0,
-        )
-    else:
-        vertical_window = fitz.Rect(
-            0,
-            caption_rect.y1,
-            page_rect.x1,
-            min(page_rect.y1, caption_rect.y1 + page_rect.height * 0.6),
-        )
-
-    rects = []
-    for drawing in page.get_drawings():
-        rect = drawing.get("rect")
-        if rect and rect.intersects(vertical_window):
-            rects.append(rect)
-
-    for x0, y0, x1, y1, text, *_ in page.get_text("blocks"):
-        rect = fitz.Rect(x0, y0, x1, y1)
-        if rect.intersects(vertical_window) and _normalize_text(text):
-            rects.append(rect)
-
-    if not rects:
-        return None
-
-    crop = fitz.Rect(rects[0])
-    for rect in rects[1:]:
-        crop |= rect
-    return crop
-
-
-def _refine_crop_rect(page, crop_rect, caption_rect):
-    import fitz
-
-    rect = fitz.Rect(crop_rect)
-    if rect.intersects(caption_rect):
-        if caption_rect.y0 >= rect.y0:
-            rect.y1 = min(rect.y1, caption_rect.y0 - 2)
-        else:
-            rect.y0 = max(rect.y0, caption_rect.y1 + 2)
-
-    rect.x0 = max(page.rect.x0, rect.x0 - 6)
-    rect.y0 = max(page.rect.y0, rect.y0 - 6)
-    rect.x1 = min(page.rect.x1, rect.x1 + 6)
-    rect.y1 = min(page.rect.y1, rect.y1 + 6)
-    if rect.width <= 40 or rect.height <= 40:
-        return None
-    return rect
-
-
-def _render_pdf_crop(page, crop_rect, output_path: Path, zoom: float = 3.0) -> bool:
-    import fitz
-
-    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=crop_rect, alpha=False)
-    if pix.width < 80 or pix.height < 80:
-        return False
-    pix.save(str(output_path))
-    return True
-
-
-def _looks_like_valid_table_image(image_path: Path) -> bool:
-    import numpy as np
-    from PIL import Image
-
-    img = Image.open(str(image_path)).convert("L")
-    arr = np.array(img)
-    if arr.size == 0:
-        return False
-    dark_ratio = float((arr < 245).mean())
-    return 0.01 <= dark_ratio <= 0.60
-
-
-def _render_table_from_pdf(
-    pdf_path: Path,
-    table_number: int,
-    caption: str,
+def _render_table_latex_source(
+    tex_src: str,
     output_path: Path,
-    debug_dir: Path | None = None,
-    stem: str = "table",
-) -> bool:
-    import fitz
-
-    with fitz.open(str(pdf_path)) as doc:
-        match = _find_caption_block(doc, table_number, caption)
-        if not match:
-            if debug_dir is not None:
-                _write_status(
-                    debug_dir,
-                    stem,
-                    renderer="pdf_crop_failed",
-                    note="caption_not_found",
-                )
-            return False
-
-        _, page_index, rect_tuple, _ = match
-        page = doc[page_index]
-        caption_rect = fitz.Rect(rect_tuple)
-
-        crop_rect = _estimate_table_crop(page, caption_rect, search_above=True)
-        if crop_rect is None:
-            crop_rect = _estimate_table_crop(page, caption_rect, search_above=False)
-        if crop_rect is None:
-            if debug_dir is not None:
-                _write_status(
-                    debug_dir,
-                    stem,
-                    renderer="pdf_crop_failed",
-                    note="table_region_not_found",
-                )
-            return False
-
-        crop_rect = _refine_crop_rect(page, crop_rect, caption_rect)
-        if crop_rect is None or not _render_pdf_crop(page, crop_rect, output_path):
-            if debug_dir is not None:
-                _write_status(
-                    debug_dir,
-                    stem,
-                    renderer="pdf_crop_failed",
-                    note="invalid_crop_rect",
-                )
-            return False
-
-    if not _looks_like_valid_table_image(output_path):
-        output_path.unlink(missing_ok=True)
-        if debug_dir is not None:
-            _write_status(
-                debug_dir,
-                stem,
-                renderer="pdf_crop_failed",
-                note="image_quality_check_failed",
-            )
-        return False
-
-    _trim_whitespace(output_path, padding=8)
-    if debug_dir is not None:
-        _write_status(debug_dir, stem, renderer="pdf_crop")
-    return True
-
-
-# ── LaTeX rendering ───────────────────────────────────────────────────────────
-
-
-def _render_table_latex(
-    table_body: str,
-    output_path: Path,
-    preamble_macros: str = "",
     *,
-    renew_stubs: str = "",
-    text_width: str = "6.50in",
     debug_dir: Path | None = None,
     stem: str = "table",
+    status_note: str = "",
 ) -> bool:
-    """
-    Compile `table_body` as a standalone LaTeX document and rasterise to PNG.
-
-    Returns True on success, False on any failure (missing pdflatex,
-    compilation error, empty PDF, …).
-    """
-    if not shutil.which("pdflatex"):
-        if debug_dir is not None:
-            _write_status(
-                debug_dir, stem, renderer="latex_failed", note="pdflatex_not_found"
-            )
-        return False
-
-    tex_src = (
-        _LATEX_TEMPLATE.replace("@@RENEW_STUBS@@", renew_stubs)
-        .replace("@@PREAMBLE_MACROS@@", preamble_macros)
-        .replace("@@TABLE_BODY@@", table_body)
-        .replace("@@TEXT_WIDTH@@", text_width)
-    )
-
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -598,7 +406,10 @@ def _render_table_latex(
                     if log_file.exists():
                         shutil.copy2(log_file, debug_dir / f"{stem}.latex.log")
                     _write_status(
-                        debug_dir, stem, renderer="latex_failed", note="compile_error"
+                        debug_dir,
+                        stem,
+                        renderer="latex_failed",
+                        note=status_note or "compile_error",
                     )
                 return False
 
@@ -609,7 +420,10 @@ def _render_table_latex(
                 doc.close()
                 if debug_dir is not None:
                     _write_status(
-                        debug_dir, stem, renderer="latex_failed", note="empty_pdf"
+                        debug_dir,
+                        stem,
+                        renderer="latex_failed",
+                        note=status_note or "empty_pdf",
                     )
                 return False
 
@@ -625,9 +439,59 @@ def _render_table_latex(
         if debug_dir is not None:
             _write_text(debug_dir / f"{stem}.latex.tex", tex_src)
             _write_status(
-                debug_dir, stem, renderer="latex_failed", note="python_exception"
+                debug_dir,
+                stem,
+                renderer="latex_failed",
+                note=status_note or "python_exception",
             )
         return False
+
+
+def _render_table_latex(
+    table_body: str,
+    output_path: Path,
+    preamble_macros: str = "",
+    *,
+    renew_stubs: str = "",
+    text_width: str = "6.50in",
+    debug_dir: Path | None = None,
+    stem: str = "table",
+    retry_table_body: str | None = None,
+) -> bool:
+    """
+    Compile `table_body` as a standalone LaTeX document and rasterise to PNG.
+
+    Returns True on success, False on any failure (missing pdflatex,
+    compilation error, empty PDF, …).
+    """
+    if not shutil.which("pdflatex"):
+        if debug_dir is not None:
+            _write_status(
+                debug_dir, stem, renderer="latex_failed", note="pdflatex_not_found"
+            )
+        return False
+
+    attempts = [(table_body, "compile_error")]
+    if retry_table_body and retry_table_body.strip() and retry_table_body != table_body:
+        attempts.append((retry_table_body, "compile_error_retry"))
+
+    for current_body, status_note in attempts:
+        tex_src = (
+            _LATEX_TEMPLATE.replace("@@RENEW_STUBS@@", renew_stubs)
+            .replace("@@PREAMBLE_MACROS@@", preamble_macros)
+            .replace("@@TABLE_BODY@@", current_body)
+            .replace("@@TEXT_WIDTH@@", text_width)
+        )
+        if _render_table_latex_source(
+            tex_src,
+            output_path,
+            debug_dir=debug_dir,
+            stem=stem,
+            status_note=status_note,
+        ):
+            return True
+
+    return False
 
 
 # ── matplotlib fallback ───────────────────────────────────────────────────────
@@ -827,7 +691,6 @@ def parse_tables(
     preamble_macros = _extract_preamble_macros(tex)
     renew_stubs = _extract_renewcommand_stubs(tex)
     text_width = _detect_textwidth(tex)
-    pdf_path = _resolve_pdf_path(tex_path)
 
     results: list[FigureInfo] = []
     tbl_number = 0
@@ -844,6 +707,7 @@ def parse_tables(
         label_m = _LABEL.search(env_text)
         label = label_m.group(1) if label_m else ""
         table_body = _prepare_table_body(env_text)
+        retry_table_body = _prepare_table_body_retry(env_text)
         tabular_raw = tab_full.group(1)
 
         tbl_number += 1
@@ -856,31 +720,18 @@ def parse_tables(
         else:
             output_path.unlink(missing_ok=True)
 
-            ok = False
-            if pdf_path is not None:
-                ok = _render_table_from_pdf(
-                    pdf_path,
-                    tbl_number,
-                    caption,
-                    output_path,
-                    debug_dir=debug_dir,
-                    stem=stem,
-                )
-                if ok:
-                    render_backend = "pdf_crop"
-
-            if not ok:
-                ok = _render_table_latex(
-                    table_body or tabular_raw,
-                    output_path,
-                    preamble_macros,
-                    renew_stubs=renew_stubs,
-                    text_width=text_width,
-                    debug_dir=debug_dir,
-                    stem=stem,
-                )
-                if ok:
-                    render_backend = "latex"
+            ok = _render_table_latex(
+                table_body or tabular_raw,
+                output_path,
+                preamble_macros,
+                renew_stubs=renew_stubs,
+                text_width=text_width,
+                debug_dir=debug_dir,
+                stem=stem,
+                retry_table_body=retry_table_body or tabular_raw,
+            )
+            if ok:
+                render_backend = "latex"
 
             if not ok:
                 rows = _parse_tabular_rows(env_text)
@@ -893,7 +744,7 @@ def parse_tables(
                 if ok:
                     _write_text(
                         debug_dir / f"{stem}.fallback.txt",
-                        "pdf_crop_failed_or_latex_failed -> matplotlib\n",
+                        "latex_failed -> matplotlib\n",
                     )
                     render_backend = "matplotlib"
 
