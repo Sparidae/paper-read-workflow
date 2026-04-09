@@ -8,6 +8,7 @@ Rendering pipeline:
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -322,6 +323,13 @@ def _prepare_table_body(env_text: str) -> str:
     float-only metadata like ``\caption`` / ``\label``.
     """
     body = _strip_wrapper_commands(env_text, ("caption", "caption*", "label"))
+    # Strip \vspace / \vspace*: float-positioning tricks that shrink the
+    # standalone bounding box (negative → clips bottom; positive → useless
+    # whitespace).  Row extra-spacing inside tabular uses \\[Xpt] syntax.
+    body = re.sub(r"\\vspace\*?\{[^}]*\}", "", body)
+    # Strip negative \hspace / \hspace*: can shift content outside the
+    # measured bounding box, clipping the rendered image horizontally.
+    body = re.sub(r"\\hspace\*?\{-[^}]*\}", "", body)
     return body.strip()
 
 
@@ -354,14 +362,27 @@ def _write_status(debug_dir: Path, stem: str, *, renderer: str, note: str = "") 
     _write_text(debug_dir / f"{stem}.status.txt", "\n".join(lines) + "\n")
 
 
+def _write_render_json(debug_dir: Path, stem: str, data: dict) -> None:
+    """Persist a complete render-result record as JSON."""
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    (debug_dir / f"{stem}.json").write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _read_render_json(debug_dir: Path, stem: str) -> dict:
+    """Load a previously written render-result record, or return {}."""
+    p = debug_dir / f"{stem}.json"
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
 def _read_status_renderer(debug_dir: Path, stem: str) -> str:
-    status_path = debug_dir / f"{stem}.status.txt"
-    if not status_path.exists():
-        return ""
-    for line in status_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if line.startswith("renderer="):
-            return line.split("=", 1)[1].strip()
-    return ""
+    return _read_render_json(debug_dir, stem).get("renderer", "")
 
 
 def _render_table_latex_source(
@@ -372,6 +393,11 @@ def _render_table_latex_source(
     stem: str = "table",
     status_note: str = "",
 ) -> bool:
+    # Always persist the LaTeX source before compiling so it survives both
+    # success and failure paths.
+    if debug_dir is not None:
+        _write_text(debug_dir / f"{stem}.latex.tex", tex_src)
+
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -394,7 +420,6 @@ def _render_table_latex_source(
             log_file = tmp / "table.log"
             if result.returncode != 0 or not pdf_file.exists():
                 if debug_dir is not None:
-                    _write_text(debug_dir / f"{stem}.latex.tex", tex_src)
                     _write_text(
                         debug_dir / f"{stem}.latex.stdout.txt",
                         result.stdout.decode("utf-8", errors="replace"),
@@ -405,12 +430,6 @@ def _render_table_latex_source(
                     )
                     if log_file.exists():
                         shutil.copy2(log_file, debug_dir / f"{stem}.latex.log")
-                    _write_status(
-                        debug_dir,
-                        stem,
-                        renderer="latex_failed",
-                        note=status_note or "compile_error",
-                    )
                 return False
 
             import fitz  # PyMuPDF
@@ -418,13 +437,6 @@ def _render_table_latex_source(
             doc = fitz.open(str(pdf_file))
             if len(doc) == 0:
                 doc.close()
-                if debug_dir is not None:
-                    _write_status(
-                        debug_dir,
-                        stem,
-                        renderer="latex_failed",
-                        note=status_note or "empty_pdf",
-                    )
                 return False
 
             page = doc[0]
@@ -432,17 +444,12 @@ def _render_table_latex_source(
             pix = page.get_pixmap(matrix=mat, alpha=False)
             pix.save(str(output_path))
             doc.close()
-            if debug_dir is not None:
-                _write_status(debug_dir, stem, renderer="latex")
             return True
     except Exception:
         if debug_dir is not None:
-            _write_text(debug_dir / f"{stem}.latex.tex", tex_src)
-            _write_status(
-                debug_dir,
-                stem,
-                renderer="latex_failed",
-                note=status_note or "python_exception",
+            _write_text(
+                debug_dir / f"{stem}.latex.stderr.txt",
+                "python_exception during compilation",
             )
         return False
 
@@ -686,7 +693,7 @@ def parse_tables(
         return []
 
     tables_dir.mkdir(parents=True, exist_ok=True)
-    debug_dir = tables_dir / "debug"
+    debug_dir = tex_path.parent / "debug"
     debug_dir.mkdir(parents=True, exist_ok=True)
     preamble_macros = _extract_preamble_macros(tex)
     renew_stubs = _extract_renewcommand_stubs(tex)
@@ -742,13 +749,27 @@ def parse_tables(
                     stem=stem,
                 )
                 if ok:
-                    _write_text(
-                        debug_dir / f"{stem}.fallback.txt",
-                        "latex_failed -> matplotlib\n",
-                    )
                     render_backend = "matplotlib"
 
             if not ok:
+                # Record failure in JSON log
+                _write_render_json(
+                    debug_dir,
+                    stem,
+                    {
+                        "kind": "table",
+                        "number": tbl_number,
+                        "status": "failed",
+                        "caption": caption,
+                        "label": label,
+                        "latex_tex": f"{stem}.latex.tex"
+                        if (debug_dir / f"{stem}.latex.tex").exists()
+                        else None,
+                        "stderr": f"{stem}.latex.stderr.txt"
+                        if (debug_dir / f"{stem}.latex.stderr.txt").exists()
+                        else None,
+                    },
+                )
                 tbl_number -= 1
                 continue
 
@@ -759,6 +780,30 @@ def parse_tables(
         except OSError:
             tbl_number -= 1
             continue
+
+        # Read the LaTeX source that was compiled (if available)
+        latex_tex_path = debug_dir / f"{stem}.latex.tex"
+        latex_source = (
+            latex_tex_path.read_text(encoding="utf-8", errors="replace")
+            if latex_tex_path.exists()
+            else None
+        )
+
+        _write_render_json(
+            debug_dir,
+            stem,
+            {
+                "kind": "table",
+                "number": tbl_number,
+                "status": "success",
+                "renderer": render_backend,
+                "caption": caption,
+                "label": label,
+                "image": str(output_path.relative_to(tex_path.parent)),
+                "text_width": text_width,
+                "latex_source": latex_source,
+            },
+        )
 
         results.append(
             FigureInfo(

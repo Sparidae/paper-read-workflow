@@ -10,6 +10,7 @@ Robustness strategy:
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -253,20 +254,17 @@ def _write_status(debug_dir: Path, stem: str, *, renderer: str, note: str = "") 
     _write_text(debug_dir / f"{stem}.status.txt", "\n".join(lines) + "\n")
 
 
-def _write_meta(
-    debug_dir: Path, stem: str, *, env_index: int, label: str, caption: str
-) -> None:
-    lines = [
-        f"env_index={env_index}",
-        f"label={label}",
-        f"caption={caption}",
-    ]
-    _write_text(debug_dir / f"{stem}.meta.txt", "\n".join(lines) + "\n")
+def _write_render_json(debug_dir: Path, stem: str, data: dict) -> None:
+    """Persist a complete render-result record as JSON."""
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    (debug_dir / f"{stem}.json").write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def _clear_debug_artifacts(debug_dir: Path, stem: str) -> None:
     for suffix in (
-        ".latex.tex",
+        # ".latex.tex" is kept as a permanent render log
         ".latex.stdout.txt",
         ".latex.stderr.txt",
         ".latex.log",
@@ -543,6 +541,9 @@ def _render_figure_latex(
                 .replace("@@TEXT_HEIGHT@@", text_height)
             )
             last_tex_src = tex_src
+            # Always persist the LaTeX source before compiling so it is
+            # available for both success and failure paths.
+            _write_text(debug_dir / f"{stem}.latex.tex", tex_src)
 
             with tempfile.TemporaryDirectory() as tmpdir_str:
                 tmpdir = Path(tmpdir_str)
@@ -573,7 +574,6 @@ def _render_figure_latex(
                 pdf_file = tmpdir / "figure.pdf"
                 log_file = tmpdir / "figure.log"
                 if result.returncode != 0 or not pdf_file.exists():
-                    _write_text(debug_dir / f"{stem}.latex.tex", tex_src)
                     _write_text(
                         debug_dir / f"{stem}.latex.stdout.txt",
                         result.stdout.decode("utf-8", errors="replace"),
@@ -615,7 +615,6 @@ def _render_figure_latex(
                 )
                 return True
 
-        _write_text(debug_dir / f"{stem}.latex.tex", last_tex_src)
         _write_status(
             debug_dir, stem, renderer="latex_failed", note="compile_error_or_clipped"
         )
@@ -726,11 +725,26 @@ def parse_figures(
     tex_for_env_scan = _strip_tex_comments(tex)
 
     source_dir = _source_dir_from_tex(tex_path)
-    debug_dir = figures_dir / "debug"
+    debug_dir = tex_path.parent / "debug"
     debug_dir.mkdir(parents=True, exist_ok=True)
     preamble_macros = _extract_preamble_macros(tex)
     renew_stubs = _extract_renewcommand_stubs(tex)
     text_width, column_width = _detect_textwidth(tex, source_dir)
+
+    # Collect source files available for LaTeX compilation
+    source_files: list[str] = []
+    if source_dir.exists():
+        source_files.extend(
+            str(f.relative_to(tex_path.parent))
+            for f in sorted(source_dir.rglob("*"))
+            if f.is_file()
+        )
+    if figures_dir.exists():
+        source_files.extend(
+            str(f.relative_to(tex_path.parent))
+            for f in sorted(figures_dir.glob("*"))
+            if f.is_file()
+        )
 
     results: list[FigureInfo] = []
     fig_number = 0
@@ -754,10 +768,8 @@ def parse_figures(
         if not ig_matches or _looks_like_latex_drawn_figure(env_text):
             fig_number += 1
             rendered_path = figures_dir / f"latex_figure_env_{env_index:02d}.png"
-            stem = f"latex_figure_env_{env_index:02d}"
-            _write_meta(
-                debug_dir, stem, env_index=env_index, label=label, caption=caption
-            )
+            # Debug stem uses sequential figure number for clean naming
+            stem = f"figure_{fig_number:02d}"
             if force_rerender:
                 rendered_path.unlink(missing_ok=True)
             if not rendered_path.exists():
@@ -774,12 +786,58 @@ def parse_figures(
                     column_width=col_width,
                 )
                 if not ok:
+                    _write_render_json(
+                        debug_dir,
+                        stem,
+                        {
+                            "kind": "figure",
+                            "number": fig_number,
+                            "env_index": env_index,
+                            "status": "failed",
+                            "renderer": "latex_failed",
+                            "caption": caption,
+                            "label": label,
+                            "image": str(rendered_path.relative_to(tex_path.parent)),
+                            "latex_tex": f"{stem}.latex.tex",
+                            "stderr": f"{stem}.latex.stderr.txt"
+                            if (debug_dir / f"{stem}.latex.stderr.txt").exists()
+                            else None,
+                            "source_files": source_files,
+                        },
+                    )
                     fig_number -= 1
                     if not ig_matches:
                         continue
                 else:
                     try:
                         if rendered_path.stat().st_size <= _MAX_FILE_BYTES:
+                            latex_source = (
+                                (debug_dir / f"{stem}.latex.tex").read_text(
+                                    encoding="utf-8", errors="replace"
+                                )
+                                if (debug_dir / f"{stem}.latex.tex").exists()
+                                else None
+                            )
+                            _write_render_json(
+                                debug_dir,
+                                stem,
+                                {
+                                    "kind": "figure",
+                                    "number": fig_number,
+                                    "env_index": env_index,
+                                    "status": "success",
+                                    "renderer": "latex",
+                                    "caption": caption,
+                                    "label": label,
+                                    "image": str(
+                                        rendered_path.relative_to(tex_path.parent)
+                                    ),
+                                    "text_width": text_width,
+                                    "column_width": col_width,
+                                    "source_files": source_files,
+                                    "latex_source": latex_source,
+                                },
+                            )
                             results.append(
                                 FigureInfo(
                                     image_path=rendered_path,
@@ -832,6 +890,23 @@ def parse_figures(
                 continue
 
             fig_number += 1
+            fig_stem = f"figure_{fig_number:02d}"
+            _write_render_json(
+                debug_dir,
+                fig_stem,
+                {
+                    "kind": "figure",
+                    "number": fig_number,
+                    "env_index": env_index,
+                    "status": "success",
+                    "renderer": "file",
+                    "caption": caption,
+                    "label": label,
+                    "image": str(image_path.relative_to(tex_path.parent)),
+                    "latex_source": None,
+                    "source_files": None,
+                },
+            )
             results.append(
                 FigureInfo(
                     image_path=image_path,
@@ -847,11 +922,18 @@ def parse_figures(
                 break
 
         if not resolved_any and ig_matches:
-            _write_status(
+            _write_render_json(
                 debug_dir,
                 f"missing_figure_env_{env_index:02d}",
-                renderer="missing_assets",
-                note="includegraphics_found_but_no_matching_local_file",
+                {
+                    "kind": "figure",
+                    "env_index": env_index,
+                    "status": "failed",
+                    "renderer": "missing_assets",
+                    "caption": caption,
+                    "label": label,
+                    "note": "includegraphics_found_but_no_matching_local_file",
+                },
             )
         if len(results) >= max_figures:
             break
