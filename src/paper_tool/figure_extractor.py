@@ -723,6 +723,8 @@ def parse_figures(
     except Exception:
         return []
 
+    tex_for_env_scan = _strip_tex_comments(tex)
+
     source_dir = _source_dir_from_tex(tex_path)
     debug_dir = figures_dir / "debug"
     debug_dir.mkdir(parents=True, exist_ok=True)
@@ -735,9 +737,11 @@ def parse_figures(
 
     is_twocolumn = _is_twocolumn(tex)
 
-    for env_index, m in enumerate(_FIGURE_ENV.finditer(tex), start=1):
+    for env_index, m in enumerate(_FIGURE_ENV.finditer(tex_for_env_scan), start=1):
         is_starred = m.group(1) == "*"
-        env_text = _strip_tex_comments(m.group(2))
+        env_text = m.group(2)
+        if not env_text.strip():
+            continue
         ig_matches = list(_INCLUDEGRAPHICS.finditer(env_text))
 
         caption = _find_caption(env_text)
