@@ -247,13 +247,6 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8", errors="replace")
 
 
-def _write_status(debug_dir: Path, stem: str, *, renderer: str, note: str = "") -> None:
-    lines = [f"renderer={renderer}"]
-    if note:
-        lines.append(f"note={note}")
-    _write_text(debug_dir / f"{stem}.status.txt", "\n".join(lines) + "\n")
-
-
 def _write_render_json(debug_dir: Path, stem: str, data: dict) -> None:
     """Persist a complete render-result record as JSON."""
     debug_dir.mkdir(parents=True, exist_ok=True)
@@ -520,9 +513,6 @@ def _render_figure_latex(
 ) -> bool:
     """Compile a standalone figure and rasterise it to PNG."""
     if shutil.which("pdflatex") is None:
-        _write_status(
-            debug_dir, stem, renderer="latex_failed", note="pdflatex_not_found"
-        )
         return False
 
     col_width = column_width or text_width
@@ -607,21 +597,11 @@ def _render_figure_latex(
                     continue
 
                 _clear_debug_artifacts(debug_dir, stem)
-                _write_status(
-                    debug_dir,
-                    stem,
-                    renderer="latex",
-                    note=f"canvas={text_width}x{text_height}",
-                )
                 return True
 
-        _write_status(
-            debug_dir, stem, renderer="latex_failed", note="compile_error_or_clipped"
-        )
         return False
     except Exception:
         _write_text(debug_dir / f"{stem}.latex.tex", locals().get("last_tex_src", ""))
-        _write_status(debug_dir, stem, renderer="latex_failed", note="python_exception")
         return False
 
 

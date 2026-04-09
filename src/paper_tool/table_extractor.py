@@ -355,13 +355,6 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8", errors="replace")
 
 
-def _write_status(debug_dir: Path, stem: str, *, renderer: str, note: str = "") -> None:
-    lines = [f"renderer={renderer}"]
-    if note:
-        lines.append(f"note={note}")
-    _write_text(debug_dir / f"{stem}.status.txt", "\n".join(lines) + "\n")
-
-
 def _write_render_json(debug_dir: Path, stem: str, data: dict) -> None:
     """Persist a complete render-result record as JSON."""
     debug_dir.mkdir(parents=True, exist_ok=True)
@@ -472,10 +465,6 @@ def _render_table_latex(
     compilation error, empty PDF, …).
     """
     if not shutil.which("pdflatex"):
-        if debug_dir is not None:
-            _write_status(
-                debug_dir, stem, renderer="latex_failed", note="pdflatex_not_found"
-            )
         return False
 
     attempts = [(table_body, "compile_error")]
@@ -656,12 +645,8 @@ def _render_table_matplotlib(
         )
         plt.close(fig)
         _trim_whitespace(output_path)
-        if debug_dir is not None:
-            _write_status(debug_dir, stem, renderer="matplotlib")
         return True
     except Exception:
-        if debug_dir is not None:
-            _write_status(debug_dir, stem, renderer="matplotlib_failed")
         return False
 
 
