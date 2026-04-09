@@ -177,6 +177,16 @@ def _caption_rich_text_md(content: str) -> list[dict]:
     return _sanitize_caption_rich_text(_parse_inline(content))
 
 
+def _fig_caption_text(fig: "FigureInfo") -> str:
+    """Build prefixed caption '图n:' or '表n:' matching paper figure/table numbers."""
+    prefix = "表" if fig.kind == "table" else "图"
+    if fig.number:
+        prefix = f"{prefix}{fig.number}: "
+    else:
+        prefix = f"{prefix}: "
+    return f"{prefix}{fig.caption}" if fig.caption else prefix.rstrip(": ")
+
+
 def _paragraph_block(text: str) -> dict:
     return {
         "object": "block",
@@ -654,9 +664,7 @@ class NotionService:
                 "image": {
                     "type": "file_upload",
                     "file_upload": {"id": upload_id},
-                    "caption": _caption_rich_text_md(fig.caption)
-                    if fig.caption
-                    else [],
+                    "caption": _caption_rich_text_md(_fig_caption_text(fig)),
                 },
             },
         ]
@@ -784,9 +792,7 @@ class NotionService:
                     "image": {
                         "type": "file_upload",
                         "file_upload": {"id": file_upload_id},
-                        "caption": _caption_rich_text_md(fig.caption)
-                        if fig.caption
-                        else [],
+                        "caption": _caption_rich_text_md(_fig_caption_text(fig)),
                     },
                 }
             )
