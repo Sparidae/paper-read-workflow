@@ -262,134 +262,7 @@ def run_pipeline(
 
     pdf_text = paper_text
 
-    # ── Step 5: Create Notion page ─────────────────────────────────────────
-    emit(
-        {
-            "type": "stage_start",
-            "stage": "create_notion_page",
-            "label": "创建 Notion 页面...",
-        }
-    )
-    try:
-        page_id = notion.create_page(metadata)
-        emit(
-            {
-                "type": "stage_done",
-                "stage": "create_notion_page",
-                "label": "Notion 页面创建成功",
-                "status": "ok",
-            }
-        )
-    except Exception as e:
-        log.exception("创建 Notion 页面失败: %s", e)
-        emit({"type": "error", "message": f"创建 Notion 页面失败: {e}"})
-        return False
-
-    # ── Step 6a: LLM classification ────────────────────────────────────────
-    if not skip_llm:
-        emit(
-            {
-                "type": "stage_start",
-                "stage": "llm_classify",
-                "label": "LLM 分类标注中...",
-            }
-        )
-        try:
-            available_options = notion.get_classification_options()
-            classifier = LLMClassifier()
-            from pathlib import Path as _Path
-
-            from paper_tool.pdf_parser import extract_first_page_text as _efpt
-
-            _first_page = ""
-            if metadata.pdf_path:
-                try:
-                    _first_page = _efpt(_Path(metadata.pdf_path))
-                except Exception:
-                    pass
-            emit({"type": "llm_start", "title": "LLM 分类标注"})
-            classification = classifier.classify(
-                metadata,
-                available_options,
-                first_page_text=_first_page,
-                debug=debug,
-                on_token=_on_token,
-            )
-            emit({"type": "llm_end"})
-            notion.update_classifications(page_id, classification)
-
-            new_tags = (
-                [
-                    t
-                    for t in classification.paper_type
-                    if t not in available_options.get("paper_type", [])
-                ]
-                + [
-                    t
-                    for t in classification.research_areas
-                    if t not in available_options.get("research_areas", [])
-                ]
-                + [
-                    t
-                    for t in classification.institutions
-                    if t not in available_options.get("institutions", [])
-                ]
-            )
-            suffix = f"  [新增: {', '.join(new_tags)}]" if new_tags else ""
-            emit(
-                {
-                    "type": "stage_done",
-                    "stage": "llm_classify",
-                    "label": f"分类完成{suffix}",
-                    "status": "ok",
-                }
-            )
-        except Exception as e:
-            emit({"type": "llm_end"})
-            emit(
-                {
-                    "type": "stage_done",
-                    "stage": "llm_classify",
-                    "label": f"分类失败（已跳过）: {e}",
-                    "status": "warn",
-                }
-            )
-
-    # ── Step 6c: LLM one-sentence summary ─────────────────────────────────
-    if not skip_llm:
-        emit(
-            {
-                "type": "stage_start",
-                "stage": "llm_summarize",
-                "label": "LLM 生成一句话摘要...",
-            }
-        )
-        try:
-            summarizer = LLMSummarizer()
-            emit({"type": "llm_start", "title": "LLM 一句话摘要"})
-            summary = summarizer.summarize(metadata, debug=debug, on_token=_on_token)
-            emit({"type": "llm_end"})
-            notion.update_summary(page_id, summary)
-            emit(
-                {
-                    "type": "stage_done",
-                    "stage": "llm_summarize",
-                    "label": "一句话摘要写入完成",
-                    "status": "ok",
-                }
-            )
-        except Exception as e:
-            emit({"type": "llm_end"})
-            emit(
-                {
-                    "type": "stage_done",
-                    "stage": "llm_summarize",
-                    "label": f"一句话摘要生成失败（已跳过）: {e}",
-                    "status": "warn",
-                }
-            )
-
-    # ── Step 6b-pre: Extract figures and tables ────────────────────────────
+    # ── Step 5: Extract figures and tables (before any LLM work) ──────────
     figures: list = []
     tables: list = []
     if isinstance(downloader, ArxivDownloader) and tex_path is not None:
@@ -487,6 +360,133 @@ def run_pipeline(
             )
             tables = []
 
+    # ── Step 6: Create Notion page ─────────────────────────────────────────
+    emit(
+        {
+            "type": "stage_start",
+            "stage": "create_notion_page",
+            "label": "创建 Notion 页面...",
+        }
+    )
+    try:
+        page_id = notion.create_page(metadata)
+        emit(
+            {
+                "type": "stage_done",
+                "stage": "create_notion_page",
+                "label": "Notion 页面创建成功",
+                "status": "ok",
+            }
+        )
+    except Exception as e:
+        log.exception("创建 Notion 页面失败: %s", e)
+        emit({"type": "error", "message": f"创建 Notion 页面失败: {e}"})
+        return False
+
+    # ── Step 7a: LLM classification ────────────────────────────────────────
+    if not skip_llm:
+        emit(
+            {
+                "type": "stage_start",
+                "stage": "llm_classify",
+                "label": "LLM 分类标注中...",
+            }
+        )
+        try:
+            available_options = notion.get_classification_options()
+            classifier = LLMClassifier()
+            from pathlib import Path as _Path
+
+            from paper_tool.pdf_parser import extract_first_page_text as _efpt
+
+            _first_page = ""
+            if metadata.pdf_path:
+                try:
+                    _first_page = _efpt(_Path(metadata.pdf_path))
+                except Exception:
+                    pass
+            emit({"type": "llm_start", "title": "LLM 分类标注"})
+            classification = classifier.classify(
+                metadata,
+                available_options,
+                first_page_text=_first_page,
+                debug=debug,
+                on_token=_on_token,
+            )
+            emit({"type": "llm_end"})
+            notion.update_classifications(page_id, classification)
+
+            new_tags = (
+                [
+                    t
+                    for t in classification.paper_type
+                    if t not in available_options.get("paper_type", [])
+                ]
+                + [
+                    t
+                    for t in classification.research_areas
+                    if t not in available_options.get("research_areas", [])
+                ]
+                + [
+                    t
+                    for t in classification.institutions
+                    if t not in available_options.get("institutions", [])
+                ]
+            )
+            suffix = f"  [新增: {', '.join(new_tags)}]" if new_tags else ""
+            emit(
+                {
+                    "type": "stage_done",
+                    "stage": "llm_classify",
+                    "label": f"分类完成{suffix}",
+                    "status": "ok",
+                }
+            )
+        except Exception as e:
+            emit({"type": "llm_end"})
+            emit(
+                {
+                    "type": "stage_done",
+                    "stage": "llm_classify",
+                    "label": f"分类失败（已跳过）: {e}",
+                    "status": "warn",
+                }
+            )
+
+    # ── Step 7b: LLM one-sentence summary ─────────────────────────────────
+    if not skip_llm:
+        emit(
+            {
+                "type": "stage_start",
+                "stage": "llm_summarize",
+                "label": "LLM 生成一句话摘要...",
+            }
+        )
+        try:
+            summarizer = LLMSummarizer()
+            emit({"type": "llm_start", "title": "LLM 一句话摘要"})
+            summary = summarizer.summarize(metadata, debug=debug, on_token=_on_token)
+            emit({"type": "llm_end"})
+            notion.update_summary(page_id, summary)
+            emit(
+                {
+                    "type": "stage_done",
+                    "stage": "llm_summarize",
+                    "label": "一句话摘要写入完成",
+                    "status": "ok",
+                }
+            )
+        except Exception as e:
+            emit({"type": "llm_end"})
+            emit(
+                {
+                    "type": "stage_done",
+                    "stage": "llm_summarize",
+                    "label": f"一句话摘要生成失败（已跳过）: {e}",
+                    "status": "warn",
+                }
+            )
+
     if not skip_llm and figures:
         emit(
             {
@@ -557,7 +557,7 @@ def run_pipeline(
                 }
             )
 
-    # ── Step 6b: LLM note generation ──────────────────────────────────────
+    # ── Step 7c: LLM note generation ──────────────────────────────────────
     note = None
     if not skip_llm:
         emit(
@@ -598,7 +598,7 @@ def run_pipeline(
                 }
             )
 
-    # ── Step 7: Write to Notion ────────────────────────────────────────────
+    # ── Step 8: Write to Notion ────────────────────────────────────────────
     has_visuals = bool(figures or tables)
     if note is not None:
         emit(
