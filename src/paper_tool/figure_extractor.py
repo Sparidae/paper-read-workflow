@@ -749,7 +749,13 @@ def parse_figures(
 
         col_width = text_width if is_starred or not is_twocolumn else column_width
 
-        if not ig_matches or _looks_like_latex_drawn_figure(env_text):
+        # Multiple \includegraphics in one figure env = one logical figure (shared caption,
+        # no subfigure structure). Render via LaTeX to produce a single combined image.
+        if (
+            not ig_matches
+            or _looks_like_latex_drawn_figure(env_text)
+            or len(ig_matches) > 1
+        ):
             fig_number += 1
             rendered_path = figures_dir / f"latex_figure_env_{env_index:02d}.png"
             # Debug stem uses sequential figure number for clean naming
