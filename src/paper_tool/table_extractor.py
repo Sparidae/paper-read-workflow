@@ -287,7 +287,12 @@ def _consume_balanced(text: str, start: int, open_char: str, close_char: str) ->
 
 
 def _remove_command_calls(text: str, command: str) -> str:
-    r"""Remove occurrences of commands like ``\caption[short]{long}``."""
+    r"""Remove occurrences of commands like ``\caption[short]{long}``.
+
+    Consumes one optional ``[...]`` argument followed by ALL consecutive
+    ``{...}`` arguments (handles multi-arg commands like
+    ``\resizebox{width}{height}{content}``).
+    """
     needle = f"\\{command}"
     parts: list[str] = []
     pos = 0
@@ -300,14 +305,20 @@ def _remove_command_calls(text: str, command: str) -> str:
         parts.append(text[pos:idx])
         j = idx + len(needle)
 
+        # One optional [short] argument
         while j < len(text) and text[j].isspace():
             j += 1
         if j < len(text) and text[j] == "[":
             j = _consume_balanced(text, j, "[", "]")
-        while j < len(text) and text[j].isspace():
-            j += 1
-        if j < len(text) and text[j] == "{":
-            j = _consume_balanced(text, j, "{", "}")
+
+        # All consecutive {mandatory} arguments
+        while True:
+            while j < len(text) and text[j].isspace():
+                j += 1
+            if j < len(text) and text[j] == "{":
+                j = _consume_balanced(text, j, "{", "}")
+            else:
+                break
 
         pos = j
 
