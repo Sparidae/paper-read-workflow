@@ -127,6 +127,12 @@ def _expand_tex_includes(
         target_path = _normalize_tex_path(match.group("target"), path.parent)
         nested = tex_files.get(target_path)
         if nested is None:
+            # Fallback: treat the path as relative to the project root (common
+            # when sub-files use root-anchored paths like \input{Tables/foo}).
+            root_path = _normalize_tex_path(match.group("target"), Path())
+            target_path = root_path
+            nested = tex_files.get(root_path)
+        if nested is None:
             expanded_lines.append(line)
             continue
 
