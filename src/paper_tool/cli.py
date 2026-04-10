@@ -151,7 +151,6 @@ def _process_paper(
     def on_confirm_llm(summary: dict) -> bool:
         from rich.table import Table as RichTable
 
-        progress.stop()
         tbl = RichTable(title="图表渲染结果", show_header=True, header_style="bold")
         tbl.add_column("类型", style="cyan")
         tbl.add_column("总数", justify="right")
@@ -174,7 +173,9 @@ def _process_paper(
                 str(summary["tables_latex"]),
                 mpl_str,
             )
-        console.print(tbl)
+        # 在 Live 运行时打印，表格永久写入终端历史，不会被后续 Live 刷新覆盖
+        progress.console.print(tbl)
+        progress.stop()
         result = typer.confirm("继续进行 LLM 分析？", default=True)
         progress.start()
         return result
