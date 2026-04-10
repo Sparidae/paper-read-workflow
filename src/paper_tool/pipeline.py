@@ -32,6 +32,7 @@ def run_pipeline(
     force: bool = False,
     on_event: Callable[[dict], None] | None = None,
     on_confirm_force: Callable[[str], bool] | None = None,
+    on_confirm_llm: Callable[[dict], bool] | None = None,
 ) -> bool:
     """
     Download, analyse and write a paper to Notion.
@@ -45,6 +46,12 @@ def run_pipeline(
         Called when force=True and duplicate pages are found, with a human-
         readable prompt string.  Return True to proceed, False to abort.
         Defaults to auto-confirm (always True) when not provided.
+    on_confirm_llm:
+        Called after figure/table extraction and before any LLM step, with a
+        render-summary dict containing counts by backend.  Return True to run
+        LLM, False to skip it (figures/tables are still uploaded to Notion).
+        Only invoked when figures or tables were extracted.  Defaults to
+        auto-confirm (always True) when not provided.
 
     Returns True on success, False on any hard failure.
     """
@@ -359,6 +366,23 @@ def run_pipeline(
                 }
             )
             tables = []
+
+    # ── Render summary + LLM gate (only when visuals were extracted) ──────
+    if not skip_llm and (figures or tables):
+        latex_t = sum(1 for t in tables if t.render_backend == "latex")
+        mpl_t = sum(1 for t in tables if t.render_backend == "matplotlib")
+        cached_t = sum(1 for t in tables if t.render_backend == "cached")
+        summary = {
+            "figures_total": len(figures),
+            "tables_total": len(tables),
+            "tables_latex": latex_t,
+            "tables_matplotlib": mpl_t,
+            "tables_cached": cached_t,
+        }
+        emit({"type": "render_summary", **summary})
+        confirm_llm = on_confirm_llm or (lambda _: True)
+        if not confirm_llm(summary):
+            skip_llm = True
 
     # ── Step 6: Create Notion page ─────────────────────────────────────────
     emit(

@@ -81,6 +81,7 @@ def _process_paper(
     Rich CLI adapter: drives run_pipeline() and renders progress + LLM stream
     in the terminal.  Returns True on success, False on failure.
     """
+
     from paper_tool.llm_stream import StreamWindow
     from paper_tool.pipeline import run_pipeline
 
@@ -147,6 +148,37 @@ def _process_paper(
         progress.start()
         return result
 
+    def on_confirm_llm(summary: dict) -> bool:
+        from rich.table import Table as RichTable
+
+        progress.stop()
+        tbl = RichTable(title="图表渲染结果", show_header=True, header_style="bold")
+        tbl.add_column("类型", style="cyan")
+        tbl.add_column("总数", justify="right")
+        tbl.add_column("LaTeX", justify="right", style="green")
+        tbl.add_column("Matplotlib", justify="right")
+
+        if summary["figures_total"]:
+            tbl.add_row(
+                "图片",
+                str(summary["figures_total"]),
+                str(summary["figures_total"]),
+                "-",
+            )
+        if summary["tables_total"]:
+            mpl = summary["tables_matplotlib"]
+            mpl_str = f"[bold red]{mpl}[/bold red]" if mpl else str(mpl)
+            tbl.add_row(
+                "表格",
+                str(summary["tables_total"]),
+                str(summary["tables_latex"]),
+                mpl_str,
+            )
+        console.print(tbl)
+        result = typer.confirm("继续进行 LLM 分析？", default=True)
+        progress.start()
+        return result
+
     success = run_pipeline(
         url,
         skip_llm=skip_llm,
@@ -154,6 +186,7 @@ def _process_paper(
         force=force,
         on_event=on_event,
         on_confirm_force=on_confirm_force,
+        on_confirm_llm=on_confirm_llm,
     )
 
     if _stream_win[0] is not None:
