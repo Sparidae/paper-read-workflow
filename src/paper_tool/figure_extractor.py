@@ -170,7 +170,11 @@ def _extract_preamble_macros(tex: str) -> str:
 def _extract_renewcommand_stubs(tex: str) -> str:
     r"""Create ``\providecommand`` stubs for commands redefined in the preamble."""
     preamble = tex.split(r"\begin{document}", 1)[0]
-    commands = sorted(set(re.findall(r"\\renewcommand\{(\\[A-Za-z@]+)\}", preamble)))
+    # Match both \renewcommand{\cmd} and \renewcommand\cmd (no-brace form)
+    matches = re.findall(
+        r"\\renewcommand\*?\s*(?:\{(\\[A-Za-z@]+)\}|(\\[A-Za-z@]+))", preamble
+    )
+    commands = sorted({cmd for pair in matches for cmd in pair if cmd})
     return "\n".join(f"\\providecommand{{{cmd}}}{{}}" for cmd in commands)
 
 

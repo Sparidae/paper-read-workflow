@@ -77,7 +77,11 @@ def _extract_renewcommand_stubs(tex: str) -> str:
     defined by a style package not loaded in our standalone template.
     """
     preamble = tex.split(r"\begin{document}", 1)[0]
-    commands = sorted(set(re.findall(r"\\renewcommand\{(\\[A-Za-z@]+)\}", preamble)))
+    # Match both \renewcommand{\cmd} and \renewcommand\cmd (no-brace form)
+    matches = re.findall(
+        r"\\renewcommand\*?\s*(?:\{(\\[A-Za-z@]+)\}|(\\[A-Za-z@]+))", preamble
+    )
+    commands = sorted({cmd for pair in matches for cmd in pair if cmd})
     return "\n".join(f"\\providecommand{{{cmd}}}{{}}" for cmd in commands)
 
 
@@ -330,6 +334,9 @@ def _prepare_table_body(env_text: str) -> str:
     # Strip negative \hspace / \hspace*: can shift content outside the
     # measured bounding box, clipping the rendered image horizontally.
     body = re.sub(r"\\hspace\*?\{-[^}]*\}", "", body)
+    # Collapse blank lines: inside tabular column specs they produce \par
+    # errors (\@@array failure); inside cells they're equally invalid.
+    body = re.sub(r"\n[ \t]*\n", "\n", body)
     return body.strip()
 
 
