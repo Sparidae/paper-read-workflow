@@ -382,7 +382,8 @@ def run_pipeline(
         emit({"type": "render_summary", **summary})
         confirm_llm = on_confirm_llm or (lambda _: True)
         if not confirm_llm(summary):
-            skip_llm = True
+            emit({"type": "done", "success": False})
+            return False
 
     # ── Step 6: Create Notion page ─────────────────────────────────────────
     emit(
