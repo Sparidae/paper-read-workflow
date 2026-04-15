@@ -699,6 +699,28 @@ def run_pipeline(
             emit({"type": "error", "message": f"图表上传失败: {e}"})
             return False
 
+    try:
+        from paper_tool.citation_refresh import maybe_refresh_citations
+
+        maybe_refresh_citations(on_event=emit)
+    except Exception as e:
+        log.exception("引用量刷新检查失败: %s", e)
+        emit(
+            {
+                "type": "stage_start",
+                "stage": "refresh_citations",
+                "label": "刷新数据库引用量...",
+            }
+        )
+        emit(
+            {
+                "type": "stage_done",
+                "stage": "refresh_citations",
+                "label": f"引用量刷新失败: {e}",
+                "status": "warn",
+            }
+        )
+
     page_url = notion.get_page_url(page_id)
     emit({"type": "done", "page_url": page_url})
     return True

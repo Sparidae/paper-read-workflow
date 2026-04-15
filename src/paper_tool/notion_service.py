@@ -494,6 +494,39 @@ class NotionService:
         pages = self.find_existing_pages(paper_url)
         return pages[0] if pages else None
 
+    def list_database_pages(self) -> list[dict[str, Any]]:
+        """Return all non-archived pages in the configured database."""
+        pages: list[dict[str, Any]] = []
+        next_cursor: str | None = None
+
+        while True:
+            query_kwargs: dict[str, Any] = {"database_id": self._database_id}
+            if next_cursor:
+                query_kwargs["start_cursor"] = next_cursor
+
+            results = self._api_call(self._client.databases.query, **query_kwargs)
+            for page in results.get("results", []):
+                if page.get("archived") or page.get("in_trash"):
+                    continue
+                pages.append(page)
+
+            if not results.get("has_more"):
+                break
+            next_cursor = results.get("next_cursor")
+
+        return pages
+
+    def get_page_source_url(self, page: dict[str, Any]) -> str | None:
+        """Return the configured source URL property from a page payload."""
+        url_prop = self._props.get("url", "")
+        if not url_prop:
+            return None
+        prop = page.get("properties", {}).get(url_prop, {})
+        if prop.get("type") != "url":
+            return None
+        url = prop.get("url")
+        return url if isinstance(url, str) and url else None
+
     def archive_page(self, page_id: str) -> None:
         """Archive a page so it no longer blocks duplicate checks."""
         self._api_call(
@@ -576,6 +609,17 @@ class NotionService:
                 page_id=page_id,
                 properties=prop_updates,
             )
+
+    def update_citation_count(self, page_id: str, citation_count: int) -> None:
+        """Write citation count to the configured number property."""
+        prop_name = self._props.get("citation_count", "")
+        if not prop_name:
+            return
+        self._api_call(
+            self._client.pages.update,
+            page_id=page_id,
+            properties={prop_name: {"number": int(citation_count)}},
+        )
 
     def append_note(self, page_id: str, note: PaperNote) -> None:
         """Append note content blocks to the page body."""

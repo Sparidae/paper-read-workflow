@@ -213,6 +213,47 @@ def _process_paper(
     return success
 
 
+def _run_citation_refresh(*, force: bool) -> bool:
+    from paper_tool.citation_refresh import maybe_refresh_citations
+
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=False,
+    )
+    progress.start()
+    current_task: list[int] = []
+
+    def on_event(event: dict) -> None:
+        t = event["type"]
+        if t == "stage_start":
+            task_id = progress.add_task(f"[cyan]{event['label']}", total=None)
+            current_task.clear()
+            current_task.append(task_id)
+        elif t == "stage_done" and current_task:
+            status = event.get("status", "ok")
+            icon = "✓" if status == "ok" else "⚠"
+            color = "green" if status == "ok" else "yellow"
+            progress.update(
+                current_task[-1],
+                description=f"[{color}]{icon} {event['label']}",
+                total=1,
+                completed=1,
+            )
+
+    try:
+        success = maybe_refresh_citations(force=force, on_event=on_event)
+    finally:
+        try:
+            progress.stop()
+        except Exception:
+            pass
+
+    return success
+
+
 def _ensure_notion_database_ready() -> None:
     from paper_tool.config import get_config
     from paper_tool.notion_setup import check_database
@@ -624,6 +665,15 @@ def chat(
 
         console.print(Markdown(answer))
         console.print(Rule(style="dim"))
+
+
+@app.command("refresh-citations")
+def refresh_citations() -> None:
+    """立即刷新当前 Notion 数据库中的引用量。"""
+    _ensure_notion_database_ready()
+    success = _run_citation_refresh(force=True)
+    if not success:
+        raise typer.Exit(code=1)
 
 
 @app.command()

@@ -141,6 +141,7 @@ uv run paper-tool config init
 最重要的是：
 - `llm.model`
 - `storage.papers_dir`
+- `citations.refresh_interval_days`
 
 Notion 数据库 schema 默认放在仓库里的 `notion_schema.yaml`，不是敏感信息；项目默认按这个模板工作。
 
@@ -170,9 +171,13 @@ uv run python scripts/create_notion_db.py
 | `作者` | `rich_text` | 作者 |
 | `一句话摘要` | `rich_text` | 一句话摘要 |
 | `来源` | `select` | 来源（Arxiv / OpenReview） |
+| `重要性` | `select` | 手动标记论文重要性 |
+| `引用量` | `number` | Semantic Scholar 引用量 |
 | `论文链接` | `url` | 原始链接 |
 | `发表日期` | `date` | 发表日期 |
 | `添加日期` | `date` | 导入日期 |
+| `创建时间` | `created_time` | Notion 自动维护 |
+| `上次编辑时间` | `last_edited_time` | Notion 自动维护 |
 | `研究领域` | `multi_select` | 研究领域 |
 | `论文类型` | `multi_select` | 论文类型 |
 | `来源机构` | `multi_select` | 作者机构 |
@@ -191,6 +196,11 @@ uv run python scripts/create_notion_db.py --parent-page-id <your_notion_page_id>
 ```
 
 也可以直接运行 `uv run paper-tool add <url>` 或 `batch`。CLI 会先做自检；如果数据库不存在或 schema 不匹配，会要求你先运行这个预置脚本建库。
+
+引用量会在导入成功后按间隔自动刷新：
+- 刷新间隔由 `config.yaml` 的 `citations.refresh_interval_days` 控制，默认 7 天
+- 只刷新能从 `论文链接` 里提取出 arXiv ID 的页面
+- 若刷新失败，只告警，不影响当前导入成功
 
 ---
 
@@ -258,6 +268,7 @@ uv run paper-tool chat papers/2301.00001_Attention/paper.tex
 uv run paper-tool config init
 uv run paper-tool config show
 uv run paper-tool config check-db
+uv run paper-tool refresh-citations
 ```
 
 ## Web UI
