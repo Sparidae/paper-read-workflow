@@ -113,9 +113,13 @@ class Config:
                 "authors": "作者",
                 "abstract": "一句话摘要",
                 "source": "来源",
+                "importance": "重要性",
+                "citation_count": "引用量",
                 "url": "论文链接",
                 "published_date": "发表日期",
                 "added_date": "添加日期",
+                "created_time": "创建时间",
+                "last_edited_time": "上次编辑时间",
                 "tags": "研究领域",
                 "paper_type": "论文类型",
                 "institution": "来源机构",
@@ -143,6 +147,14 @@ class Config:
     @property
     def notion_database_title(self) -> str:
         return self._notion_config().get("database_title", "paper-tool Papers")
+
+    @property
+    def citations_refresh_interval_days(self) -> int:
+        raw = self._yaml.get("citations", {}).get("refresh_interval_days", 7)
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return 7
 
     # ── LLM ─────────────────────────────────────────────────────────────────
 
@@ -298,6 +310,7 @@ class Config:
             "Notion Parent Page ID", mask(os.getenv("NOTION_PARENT_PAGE_ID", ""))
         )
         table.add_row("Notion Status Type", self.notion_status_type)
+        table.add_row("引用量刷新间隔(天)", str(self.citations_refresh_interval_days))
         table.add_row("OpenAI Key", mask(os.getenv("OPENAI_API_KEY", "")))
         table.add_row(
             "OpenAI Base URL", os.getenv("OPENAI_BASE_URL", "") or "(官方默认)"
