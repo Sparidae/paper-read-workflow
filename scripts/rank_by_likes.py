@@ -9,7 +9,8 @@
 
 用法:
     uv run python scripts/rank_by_likes.py scripts/data/my_list.md
-    uv run python scripts/rank_by_likes.py scripts/data/my_list.md --min-likes 5 --top 30
+    uv run python scripts/rank_by_likes.py scripts/data/my_list.md \
+        --min-likes 5 --top 30
     uv run python scripts/rank_by_likes.py scripts/data/my_list.md --sort citations
 """
 
@@ -33,6 +34,12 @@ from rich.progress import (
 )
 from rich.table import Table
 
+from paper_tool.citations import (
+    S2_BATCH_SIZE,
+    S2_FIELDS,
+    query_semantic_scholar_batch,
+)
+
 console = Console()
 
 # 匹配 arxiv 链接中的 ID，忽略版本号
@@ -49,11 +56,6 @@ ALPHAXIV_PAGE_URL = "https://alphaxiv.org/abs/{arxiv_id}"
 JSONLD_RE = re.compile(
     r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>', re.DOTALL
 )
-
-# Semantic Scholar 批量查询接口（一次最多 500 篇）
-S2_BATCH_URL = "https://api.semanticscholar.org/graph/v1/paper/batch"
-S2_FIELDS = "citationCount,influentialCitationCount,title,year"
-S2_BATCH_SIZE = 500
 
 
 def extract_papers(text: str) -> list[dict]:
@@ -126,36 +128,24 @@ async def query_s2_batch(
     client: httpx.AsyncClient, arxiv_ids: list[str]
 ) -> dict[str, dict]:
     """批量查询 Semantic Scholar，返回 {arxiv_id: paper_data}，找不到的值为 None。"""
-    results: dict[str, dict] = {}
-
     for i in range(0, len(arxiv_ids), S2_BATCH_SIZE):
         batch = arxiv_ids[i : i + S2_BATCH_SIZE]
         console.print(f"[dim]查询 Semantic Scholar（{len(batch)} 篇）...[/dim]")
-        try:
-            resp = await client.post(
-                S2_BATCH_URL,
-                params={"fields": S2_FIELDS},
-                json={"ids": [f"arXiv:{aid}" for aid in batch]},
-                timeout=60,
-            )
-            if resp.status_code != 200:
-                console.print(
-                    f"[red]Semantic Scholar HTTP {resp.status_code}：{resp.text[:200]}[/red]"
-                )
-                for aid in batch:
-                    results[aid] = None
-                continue
-            for arxiv_id, paper in zip(batch, resp.json()):
-                results[arxiv_id] = paper
-        except httpx.TimeoutException:
-            console.print("[red]Semantic Scholar 请求超时[/red]")
-            for aid in batch:
-                results[aid] = None
-        except Exception as e:
-            console.print(f"[red]Semantic Scholar 请求异常：{e}[/red]")
-            for aid in batch:
-                results[aid] = None
-
+    try:
+        return await query_semantic_scholar_batch(
+            client,
+            arxiv_ids,
+            fields=S2_FIELDS,
+            batch_size=S2_BATCH_SIZE,
+            raise_on_error=False,
+        )
+    except httpx.TimeoutException:
+        console.print("[red]Semantic Scholar 请求超时[/red]")
+    except Exception as e:
+        console.print(f"[red]Semantic Scholar 请求异常：{e}[/red]")
+    results: dict[str, dict] = {}
+    for aid in arxiv_ids:
+        results[aid] = None
     return results
 
 
