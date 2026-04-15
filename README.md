@@ -128,6 +128,7 @@ uv run paper-tool config init
 - 至少一个可用的 LLM API Key
 
 常见可选项：
+- `NOTION_PARENT_PAGE_ID`（用于运行建库脚本时指定父页面）
 - `OPENAI_API_KEY`
 - `OPENAI_BASE_URL`（OpenAI 兼容接口，如 DeepSeek / Kimi / 本地 vLLM）
 - `ANTHROPIC_API_KEY`
@@ -140,45 +141,56 @@ uv run paper-tool config init
 最重要的是：
 - `llm.model`
 - `storage.papers_dir`
-- `notion.properties.*`
+
+Notion 数据库 schema 默认放在仓库里的 `notion_schema.yaml`，不是敏感信息；项目默认按这个模板工作。
 
 ## 4. 检查配置是否正确
 
 ```bash
 uv run paper-tool config show
 uv run paper-tool config check-db
+uv run python scripts/create_notion_db.py
 ```
 
 - `config show`：展示当前实际生效的配置（密钥会脱敏）
-- `config check-db`：检查 Notion 数据库字段是否与 `config.yaml` 映射一致
+- `config check-db`：检查 Notion 数据库字段是否与 `notion_schema.yaml` 一致
+- `scripts/create_notion_db.py`：按 `notion_schema.yaml` 创建一个新的 Notion 数据库
 
 ---
 
 ## Notion 数据库要求
 
-默认字段映射来自 `config.yaml`。
+默认字段映射来自仓库根目录的 `notion_schema.yaml`。
 
 推荐至少有这些字段：
 
 | 字段名（默认） | 类型 | 用途 |
 |---|---|---|
-| `Title` | `title` | 论文标题 |
-| `Authors` | `rich_text` | 作者 |
-| `Abstract` | `rich_text` | 一句话摘要 |
-| `Source` | `select` | 来源（Arxiv / OpenReview） |
-| `URL` | `url` | 原始链接 |
-| `Published Date` | `date` | 发表日期 |
-| `Added Date` | `date` | 导入日期 |
-| `Tags` | `multi_select` | 研究领域 |
-| `Paper Type` | `multi_select` | 论文类型 |
-| `Institution` | `multi_select` | 作者机构 |
-| `Status` | `select` 或 `checkbox` | 阅读状态 |
+| `论文笔记` | `title` | 论文标题 |
+| `作者` | `rich_text` | 作者 |
+| `一句话摘要` | `rich_text` | 一句话摘要 |
+| `来源` | `select` | 来源（Arxiv / OpenReview） |
+| `论文链接` | `url` | 原始链接 |
+| `发表日期` | `date` | 发表日期 |
+| `添加日期` | `date` | 导入日期 |
+| `研究领域` | `multi_select` | 研究领域 |
+| `论文类型` | `multi_select` | 论文类型 |
+| `来源机构` | `multi_select` | 作者机构 |
+| `阅读状态` | `checkbox` | 阅读状态 |
 
 说明：
 - `Paper Type` 和 `Institution` 不是强制字段；缺失时会跳过对应写入
-- `Status` 支持 `select` 或 `checkbox`，由 `config.yaml` 中的 `notion.status_type` 控制
+- 当前默认模板里 `阅读状态` 使用 `checkbox`
 
 记得把你的 Notion Integration 授权到目标数据库。
+
+如果你还没有目标数据库：
+
+```bash
+uv run python scripts/create_notion_db.py --parent-page-id <your_notion_page_id>
+```
+
+也可以直接运行 `uv run paper-tool add <url>` 或 `batch`。CLI 会先做自检；如果数据库不存在或 schema 不匹配，会要求你先运行这个预置脚本建库。
 
 ---
 

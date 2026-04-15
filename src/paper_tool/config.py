@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 # Project root = two levels up from this file (src/paper_tool/config.py)
 PROJECT_ROOT = Path(__file__).parent.parent.parent
+NOTION_SCHEMA_PATH = PROJECT_ROOT / "notion_schema.yaml"
 
 
 def _find_env_file() -> Path | None:
@@ -67,7 +68,16 @@ class Config:
         else:
             self._yaml = {}
 
+        if NOTION_SCHEMA_PATH.exists():
+            with open(NOTION_SCHEMA_PATH) as f:
+                self._notion_schema_yaml: dict[str, Any] = yaml.safe_load(f) or {}
+        else:
+            self._notion_schema_yaml = {}
+
         self._config_dir = config_file.parent if config_file else PROJECT_ROOT
+
+    def _notion_config(self) -> dict[str, Any]:
+        return dict(self._notion_schema_yaml.get("notion", {}))
 
     # ── Notion ──────────────────────────────────────────────────────────────
 
@@ -90,38 +100,49 @@ class Config:
         return db_id
 
     @property
+    def notion_parent_page_id(self) -> str:
+        return os.getenv("NOTION_PARENT_PAGE_ID", "").strip()
+
+    @property
     def notion_properties(self) -> dict[str, str]:
-        return self._yaml.get("notion", {}).get(
+        notion = self._notion_config()
+        return notion.get(
             "properties",
             {
-                "title": "Title",
-                "authors": "Authors",
-                "abstract": "Abstract",
-                "source": "Source",
-                "url": "URL",
-                "published_date": "Published Date",
-                "added_date": "Added Date",
-                "tags": "Tags",
-                "status": "Status",
+                "title": "论文笔记",
+                "authors": "作者",
+                "abstract": "一句话摘要",
+                "source": "来源",
+                "url": "论文链接",
+                "published_date": "发表日期",
+                "added_date": "添加日期",
+                "tags": "研究领域",
+                "paper_type": "论文类型",
+                "institution": "来源机构",
+                "status": "阅读状态",
             },
         )
 
     @property
     def notion_paper_type_prop(self) -> str:
-        return self._yaml.get("notion", {}).get("properties", {}).get("paper_type", "")
+        return self._notion_config().get("properties", {}).get("paper_type", "")
 
     @property
     def notion_institution_prop(self) -> str:
-        return self._yaml.get("notion", {}).get("properties", {}).get("institution", "")
+        return self._notion_config().get("properties", {}).get("institution", "")
 
     @property
     def notion_status_type(self) -> str:
         """'select' or 'checkbox'"""
-        return self._yaml.get("notion", {}).get("status_type", "select")
+        return self._notion_config().get("status_type", "checkbox")
 
     @property
     def notion_default_status(self) -> str:
-        return self._yaml.get("notion", {}).get("default_status", "Unread")
+        return self._notion_config().get("default_status", "Unread")
+
+    @property
+    def notion_database_title(self) -> str:
+        return self._notion_config().get("database_title", "paper-tool Papers")
 
     # ── LLM ─────────────────────────────────────────────────────────────────
 
@@ -130,7 +151,10 @@ class Config:
         return self._yaml.get("llm", {}).get("model", "openai/gpt-4o")
 
     def _load_prompt(self, key: str) -> str | None:
-        """Load a prompt file specified by config key. Returns None if not configured or missing."""
+        """
+        Load a prompt file specified by config key.
+        Returns None if not configured or missing.
+        """
         rel_path = self._yaml.get("llm", {}).get(key)
         if not rel_path:
             return None
@@ -177,7 +201,10 @@ class Config:
 
     @property
     def llm_translator_max_tokens(self) -> int:
-        """Max tokens for figure caption translation. Thinking models need more budget."""
+        """
+        Max tokens for figure caption translation.
+        Thinking models need more budget.
+        """
         return self._yaml.get("llm", {}).get("translator_max_tokens", 8000)
 
     @property
@@ -267,6 +294,10 @@ class Config:
         table.add_row("PDF 存储目录", str(self.papers_dir))
         table.add_row("Notion Token", mask(os.getenv("NOTION_TOKEN", "")))
         table.add_row("Notion Database ID", mask(os.getenv("NOTION_DATABASE_ID", "")))
+        table.add_row(
+            "Notion Parent Page ID", mask(os.getenv("NOTION_PARENT_PAGE_ID", ""))
+        )
+        table.add_row("Notion Status Type", self.notion_status_type)
         table.add_row("OpenAI Key", mask(os.getenv("OPENAI_API_KEY", "")))
         table.add_row(
             "OpenAI Base URL", os.getenv("OPENAI_BASE_URL", "") or "(官方默认)"

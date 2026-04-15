@@ -213,6 +213,28 @@ def _process_paper(
     return success
 
 
+def _ensure_notion_database_ready() -> None:
+    from paper_tool.config import get_config
+    from paper_tool.notion_setup import check_database
+
+    result = check_database()
+    if result.ok:
+        return
+
+    cfg = get_config()
+    error_console.print(f"[ERROR] Notion 自检失败: {result.reason}")
+
+    if not cfg.notion_parent_page_id:
+        console.print(
+            "[yellow]未配置 `NOTION_PARENT_PAGE_ID`。"
+            "首次建库前请先在 `.env` 中填写它。[/yellow]"
+        )
+
+    console.print("[yellow]请先运行预置建库脚本，然后再重试当前命令：[/yellow]")
+    console.print("[bold]uv run python scripts/create_notion_db.py[/bold]")
+    raise typer.Exit(code=1)
+
+
 # ── Commands ─────────────────────────────────────────────────────────────────
 
 
@@ -238,6 +260,7 @@ def add(
     log.info(
         "CMD add  url=%s  skip_llm=%s  debug=%s  force=%s", url, skip_llm, debug, force
     )
+    _ensure_notion_database_ready()
     success = _process_paper(
         url,
         skip_llm=skip_llm,
@@ -279,6 +302,7 @@ def batch(
         skip_llm,
         continue_on_error,
     )
+    _ensure_notion_database_ready()
     if not file.exists():
         error_console.print(f"[ERROR] 文件不存在: {file}")
         raise typer.Exit(code=1)
@@ -314,7 +338,10 @@ def batch(
 
     console.print(
         Panel(
-            f"成功: [green]{success_count}[/green]  失败: [red]{fail_count}[/red]  共: {len(urls)}",
+            "成功: "
+            f"[green]{success_count}[/green]  "
+            f"失败: [red]{fail_count}[/red]  "
+            f"共: {len(urls)}",
             title="批量处理完成",
         )
     )
@@ -357,7 +384,14 @@ def config_init() -> None:
     console.print("请依次输入以下配置（直接回车可跳过可选项）：\n")
 
     notion_token = typer.prompt("Notion Integration Token (secret_...)", default="")
-    notion_db_id = typer.prompt("Notion 数据库 ID", default="")
+    notion_db_id = typer.prompt(
+        "Notion 数据库 ID（可选；已有数据库时填写）",
+        default="",
+    )
+    notion_parent_page_id = typer.prompt(
+        "Notion 父页面 ID（可选，用于脚本创建数据库）",
+        default="",
+    )
 
     console.print("\n[dim]LLM API Keys（根据你使用的模型填写，其余留空）[/dim]")
     openai_key = typer.prompt("OpenAI API Key (sk-...)", default="", hide_input=True)
@@ -378,6 +412,7 @@ def config_init() -> None:
         "# paper-tool 环境配置\n",
         f"NOTION_TOKEN={notion_token}\n",
         f"NOTION_DATABASE_ID={notion_db_id}\n",
+        f"NOTION_PARENT_PAGE_ID={notion_parent_page_id}\n",
         f"OPENAI_API_KEY={openai_key}\n",
         f"OPENAI_BASE_URL={openai_base_url}\n",
         f"ANTHROPIC_API_KEY={anthropic_key}\n",
@@ -393,10 +428,11 @@ def config_init() -> None:
 
 @config_app.command("check-db")
 def config_check_db() -> None:
-    """检查 Notion 数据库的实际属性，并与 config.yaml 的映射进行对比。"""
+    """检查 Notion 数据库的实际属性，并与 notion_schema.yaml 进行对比。"""
     from rich.table import Table
 
     from paper_tool.config import get_config
+    from paper_tool.notion_setup import expected_property_types
 
     try:
         cfg = get_config()
@@ -425,6 +461,7 @@ def config_check_db() -> None:
         name: prop.get("type", "unknown")
         for name, prop in db.get("properties", {}).items()
     }
+    expected_props = expected_property_types(cfg)
 
     # ── 展示数据库中所有属性 ──────────────────────────────────────────────
     all_table = Table(title="数据库实际属性", show_lines=True)
@@ -456,9 +493,9 @@ def config_check_db() -> None:
     console.print(all_table)
     console.print()
 
-    # ── 对比 config.yaml 中的属性映射 ────────────────────────────────────
+    # ── 对比 schema 中的属性映射 ────────────────────────────────────────
     mapped_props = cfg.notion_properties
-    check_table = Table(title="config.yaml 映射检查", show_lines=True)
+    check_table = Table(title="notion_schema.yaml 映射检查", show_lines=True)
     check_table.add_column("配置键", style="cyan")
     check_table.add_column("映射到的属性名", style="yellow")
     check_table.add_column("实际类型", style="dim")
@@ -466,9 +503,17 @@ def config_check_db() -> None:
 
     all_ok = True
     for key, mapped_name in mapped_props.items():
+        if not mapped_name:
+            continue
+
+        expected_type = expected_props.get(mapped_name, "")
         if mapped_name in actual_props:
             ptype = actual_props[mapped_name]
-            status = "[green]✓ 存在[/green]"
+            if expected_type and ptype != expected_type:
+                status = f"[red]✗ 类型不匹配（期望 {expected_type}）[/red]"
+                all_ok = False
+            else:
+                status = "[green]✓ 存在[/green]"
         else:
             ptype = "-"
             status = "[red]✗ 不存在[/red]"
@@ -483,7 +528,8 @@ def config_check_db() -> None:
         console.print(
             "\n[yellow]⚠ 部分属性不存在。"
             "请检查 Notion 数据库是否缺少对应属性，"
-            "或在 config.yaml 的 notion.properties 中修改属性名映射。[/yellow]"
+            "如果想直接新建一个匹配 schema 的数据库，请运行 "
+            "[bold]uv run python scripts/create_notion_db.py[/bold]。[/yellow]"
         )
         raise typer.Exit(code=1)
 
@@ -521,8 +567,8 @@ def chat(
         error_console.print(f"[ERROR] {e}")
         raise typer.Exit(code=1)
 
-    # For new per-paper subdirectory structure, show the directory name (more informative)
-    # than the generic "paper.tex" / "paper.pdf" filename.
+    # For new per-paper subdirectory structure, show the directory name
+    # rather than the generic "paper.tex" / "paper.pdf" filename.
     display_name = (
         file_path.parent.name
         if file_path.name in ("paper.tex", "paper.pdf")

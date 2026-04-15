@@ -51,24 +51,5 @@ storage:
   # PDF 文件存储目录（相对于项目根目录，或绝对路径）
   papers_dir: "papers"
 
-# Notion 配置
-notion:
-  # 数据库属性名称映射（如果你的数据库属性名不同，在这里修改）
-  properties:
-    title: "Title"           # 标题属性（必须是 title 类型）
-    authors: "Authors"       # 作者（rich_text）
-    abstract: "Abstract"     # 摘要（rich_text）
-    source: "Source"         # 来源平台（select: Arxiv/OpenReview）
-    url: "URL"               # 论文链接（url）
-    published_date: "Published Date"  # 发表日期（date）
-    added_date: "Added Date"          # 添加日期（date）
-    tags: "Tags"             # 标签/领域（multi_select）
-    paper_type: "Paper Type" # 论文类型（multi_select：Method/Theory/Benchmark 等）
-    institution: "Institution" # 来源机构（multi_select）
-    status: "Status"         # 阅读状态（select 或 checkbox）
-  # status 字段的类型：select 或 checkbox
-  # select: 值为 default_status 字符串
-  # checkbox: 新添加时设为 false（未读）
-  status_type: "select"
-  # 新添加论文的默认状态（仅 status_type 为 select 时生效）
-  default_status: "Unread"
+# Notion 数据库 schema 固定来自仓库根目录的 notion_schema.yaml。
+# 这里不再提供 Notion 字段覆盖配置。

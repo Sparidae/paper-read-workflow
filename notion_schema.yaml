@@ -1,0 +1,16 @@
+notion:
+  database_title: "Papers"
+  properties:
+    title: "论文笔记"
+    authors: "作者"
+    abstract: "一句话摘要"
+    source: "来源"
+    url: "论文链接"
+    published_date: "发表日期"
+    added_date: "添加日期"
+    tags: "研究领域"
+    paper_type: "论文类型"
+    institution: "来源机构"
+    status: "阅读状态"
+  status_type: "checkbox"
+  default_status: "Unread"
