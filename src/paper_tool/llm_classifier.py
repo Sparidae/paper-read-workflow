@@ -31,6 +31,7 @@ _SYSTEM_PROMPT_TEMPLATE = """你是一位学术论文分类助手，负责为论
    - 论文类型：简短英文词（1-2个词），如 "Survey"、"Framework"
    - 研究领域：英文关键词或缩写（1-2个词），如 "RLHF"、"SafetyAlignment"、"VisionLM"
    - 来源机构：机构名称，如 "Meta"、"DeepMind"、"CMU"
+   - 来源机构名称不要包含英文逗号 `,`；若原名带逗号，请改写成不含逗号的等价写法
 4. 每个字段返回 selected（从现有选项选）和 new（需要新建的选项）两个列表
 5. selected 中的值必须与现有选项完全一致（包括大小写）
 
@@ -63,7 +64,8 @@ def _build_system_prompt(
 ) -> str:
     """
     Build classifier system prompt.
-    Uses provided template (from prompts/classifier.md) or falls back to the built-in template.
+    Uses provided template (from prompts/classifier.md) or falls back to the
+    built-in template.
     The options list is appended as a separate block so the prompt file stays static.
     """
 
@@ -90,12 +92,13 @@ def _build_system_prompt(
 def _build_user_prompt(metadata: PaperMetadata, first_page_text: str = "") -> str:
     base = f"""请对以下论文进行分类：
 
-**标题**: {metadata.title}
+    **标题**: {metadata.title}
 **作者**: {metadata.authors_str}
 **摘要**: {metadata.abstract}"""
     if first_page_text.strip():
         base += (
-            "\n\n**PDF 第一页完整文本**（含作者署名行和机构列表，请重点从中提取来源机构）："
+            "\n\n**PDF 第一页完整文本**"
+            "（含作者署名行和机构列表，请重点从中提取来源机构）："
             f"\n{first_page_text.strip()}"
         )
     return base
@@ -122,7 +125,8 @@ def _parse_response(raw: str, available: dict[str, list[str]]) -> Classification
         selected = [str(v) for v in field.get("selected", [])]
         new_opts = [str(v) for v in field.get("new", [])]
 
-        # Validate: selected values must exist in available options (case-insensitive fallback)
+        # Validate selected values against existing options with a
+        # case-insensitive fallback.
         valid_selected: list[str] = []
         avail_lower = {o.lower(): o for o in available.get(key, [])}
         for v in selected:
@@ -163,7 +167,8 @@ class LLMClassifier:
         Classify paper using metadata (title, abstract, authors) and optionally
         the first page PDF text for more accurate institution extraction.
 
-        available_options: {"paper_type": [...], "research_areas": [...], "institutions": [...]}
+        available_options:
+            {"paper_type": [...], "research_areas": [...], "institutions": [...]}
         """
 
         def _dbg(label: str, content: str = "") -> None:
@@ -203,7 +208,9 @@ class LLMClassifier:
         for attempt in range(max_attempts):
             if attempt > 0:
                 _dbg(
-                    f"Retry {attempt}/{max_attempts - 1} — feeding parse error back to model"
+                    "Retry "
+                    f"{attempt}/{max_attempts - 1} — feeding parse error back "
+                    "to model"
                 )
 
             try:
@@ -231,7 +238,9 @@ class LLMClassifier:
             )
             usage = response.usage
             usage_str = (
-                f"prompt={usage.prompt_tokens} completion={usage.completion_tokens} total={usage.total_tokens}"
+                "prompt="
+                f"{usage.prompt_tokens} completion={usage.completion_tokens} "
+                f"total={usage.total_tokens}"
                 if usage
                 else "N/A"
             )
@@ -245,7 +254,9 @@ class LLMClassifier:
 
             if debug:
                 _dbg(
-                    f"Response Meta  attempt={attempt}  finish_reason={finish_reason}  usage={usage_str}"
+                    "Response Meta  "
+                    f"attempt={attempt}  finish_reason={finish_reason}  "
+                    f"usage={usage_str}"
                 )
                 _dbg(f"Raw Response ({len(raw)} chars)", raw)
 

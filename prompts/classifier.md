@@ -9,6 +9,7 @@
    - 论文类型：简短英文词（1-2个词），如 "Survey"、"Framework"
    - 研究领域：英文关键词或缩写（1-2个词），如 "RLHF"、"SafetyAlignment"、"VisionLM"
    - 来源机构：**只提取第一作者所属机构**，最多 2-3 个，优先使用原文机构名，**允许中文名称**（如"上海人工智能实验室"、"清华大学"），也可使用通用缩写（如 "MIT"、"CMU"）
+   - **不要输出包含英文逗号 `,` 的机构名**：Notion 的 multi_select 不允许逗号。若原机构名含逗号，请改写成不含逗号的等价写法，如 "University of California Santa Barbara" 或更常见缩写 "UC Santa Barbara"
 4. 每个字段返回 selected（从现有选项选）和 new（需要新建的选项）两个列表
 5. selected 中的值必须与现有选项完全一致（包括大小写）
 

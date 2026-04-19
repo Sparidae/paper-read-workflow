@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import mimetypes
 import re
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +15,8 @@ import httpx
 
 from paper_tool.config import get_config
 from paper_tool.models import Classification, FigureInfo, PaperMetadata, PaperNote
+
+log = logging.getLogger(__name__)
 
 # Notion API: single rich_text element content limit is 2000 chars
 _BLOCK_CHAR_LIMIT = 1900
@@ -175,6 +179,71 @@ def _sanitize_caption_rich_text(rich: list[dict]) -> list[dict]:
 def _caption_rich_text_md(content: str) -> list[dict]:
     """Caption-only rich_text with validation-safe inline cleanup."""
     return _sanitize_caption_rich_text(_parse_inline(content))
+
+
+def _prepare_image_for_upload(
+    image_path: Path,
+) -> tuple[Path, tempfile.TemporaryDirectory | None]:
+    """
+    Flatten transparent images onto a white background for Notion upload only.
+
+    Returns the original path when no alpha channel is present.
+    """
+    try:
+        from PIL import Image
+
+        with Image.open(str(image_path)) as img:
+            has_alpha = "A" in img.getbands() or "transparency" in img.info
+            if not has_alpha:
+                return image_path, None
+
+            tmpdir = tempfile.TemporaryDirectory()
+            output_path = Path(tmpdir.name) / f"{image_path.stem}.png"
+            composited = Image.alpha_composite(
+                Image.new("RGBA", img.size, (255, 255, 255, 255)),
+                img.convert("RGBA"),
+            ).convert("RGB")
+            composited.save(output_path, format="PNG")
+            return output_path, tmpdir
+    except Exception:
+        return image_path, None
+
+
+def _sanitize_multi_select_name(value: str) -> str:
+    """Normalize a Notion multi_select option name to avoid validation errors."""
+    cleaned = re.sub(r"\s+", " ", value).strip()
+    cleaned = cleaned.replace(",", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def _build_multi_select_payload(
+    values: list[str], *, field_name: str
+) -> list[dict[str, str]]:
+    """Sanitize and deduplicate Notion multi_select values."""
+    payload: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    for raw in values:
+        cleaned = _sanitize_multi_select_name(str(raw))
+        if not cleaned:
+            continue
+
+        if cleaned != raw:
+            log.info(
+                "Sanitized Notion multi_select option for %s: %r -> %r",
+                field_name,
+                raw,
+                cleaned,
+            )
+
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        payload.append({"name": cleaned})
+
+    return payload
 
 
 def _fig_caption_text(fig: "FigureInfo") -> str:
@@ -588,27 +657,70 @@ class NotionService:
     ) -> None:
         """Write classification tags to page properties."""
         props = self._props
-        prop_updates: dict[str, Any] = {}
+        prop_updates: dict[str, dict[str, Any]] = {}
+        field_labels: dict[str, str] = {}
 
         if classification.research_areas and props.get("tags"):
-            prop_updates[props["tags"]] = {
-                "multi_select": [{"name": v} for v in classification.research_areas]
-            }
+            payload = _build_multi_select_payload(
+                classification.research_areas,
+                field_name=props["tags"],
+            )
+            if payload:
+                prop_updates[props["tags"]] = {"multi_select": payload}
+                field_labels[props["tags"]] = props["tags"]
         if classification.paper_type and self._paper_type_prop:
-            prop_updates[self._paper_type_prop] = {
-                "multi_select": [{"name": v} for v in classification.paper_type]
-            }
+            payload = _build_multi_select_payload(
+                classification.paper_type,
+                field_name=self._paper_type_prop,
+            )
+            if payload:
+                prop_updates[self._paper_type_prop] = {"multi_select": payload}
+                field_labels[self._paper_type_prop] = self._paper_type_prop
         if classification.institutions and self._institution_prop:
-            prop_updates[self._institution_prop] = {
-                "multi_select": [{"name": v} for v in classification.institutions]
-            }
+            payload = _build_multi_select_payload(
+                classification.institutions,
+                field_name=self._institution_prop,
+            )
+            if payload:
+                prop_updates[self._institution_prop] = {"multi_select": payload}
+                field_labels[self._institution_prop] = self._institution_prop
 
         if prop_updates:
-            self._api_call(
-                self._client.pages.update,
-                page_id=page_id,
-                properties=prop_updates,
-            )
+            try:
+                self._api_call(
+                    self._client.pages.update,
+                    page_id=page_id,
+                    properties=prop_updates,
+                )
+                return
+            except Exception as e:
+                log.warning(
+                    "Bulk classification update failed for page %s; "
+                    "retrying per field: %s",
+                    page_id,
+                    e,
+                )
+
+            failed_fields: list[str] = []
+            for prop_name, prop_value in prop_updates.items():
+                try:
+                    self._api_call(
+                        self._client.pages.update,
+                        page_id=page_id,
+                        properties={prop_name: prop_value},
+                    )
+                except Exception as e:
+                    label = field_labels.get(prop_name, prop_name)
+                    failed_fields.append(f"{label}: {e}")
+                    log.warning(
+                        "Classification field update failed for page %s, field %s: %s",
+                        page_id,
+                        label,
+                        e,
+                    )
+
+            if failed_fields:
+                raise RuntimeError("; ".join(failed_fields))
 
     def update_citation_count(self, page_id: str, citation_count: int) -> None:
         """Write citation count to the configured number property."""
@@ -657,7 +769,8 @@ class NotionService:
           2. POST /v1/file_uploads/{id}/send  → upload multipart binary
           3. Return the id for use in image blocks
         """
-        content_type = mimetypes.guess_type(str(image_path))[0] or "image/png"
+        upload_path, temp_dir = _prepare_image_for_upload(image_path)
+        content_type = mimetypes.guess_type(str(upload_path))[0] or "image/png"
         headers_json = {
             "Authorization": f"Bearer {self._token}",
             "Content-Type": "application/json",
@@ -668,36 +781,40 @@ class NotionService:
             "Notion-Version": _NOTION_VERSION,
         }
 
-        for attempt in range(3):
-            try:
-                with httpx.Client(timeout=60) as http:
-                    r1 = http.post(
-                        f"{_NOTION_API}/file_uploads",
-                        headers=headers_json,
-                        json={
-                            "filename": image_path.name,
-                            "content_type": content_type,
-                        },
-                    )
-                    r1.raise_for_status()
-                    file_upload_id = r1.json()["id"]
-
-                    with open(image_path, "rb") as fh:
-                        r2 = http.post(
-                            f"{_NOTION_API}/file_uploads/{file_upload_id}/send",
-                            headers=headers_upload,
-                            files={"file": (image_path.name, fh, content_type)},
+        try:
+            for attempt in range(3):
+                try:
+                    with httpx.Client(timeout=60) as http:
+                        r1 = http.post(
+                            f"{_NOTION_API}/file_uploads",
+                            headers=headers_json,
+                            json={
+                                "filename": upload_path.name,
+                                "content_type": content_type,
+                            },
                         )
-                    r2.raise_for_status()
+                        r1.raise_for_status()
+                        file_upload_id = r1.json()["id"]
 
-                return file_upload_id
+                        with open(upload_path, "rb") as fh:
+                            r2 = http.post(
+                                f"{_NOTION_API}/file_uploads/{file_upload_id}/send",
+                                headers=headers_upload,
+                                files={"file": (upload_path.name, fh, content_type)},
+                            )
+                        r2.raise_for_status()
 
-            except Exception:
-                if attempt < 2:
-                    time.sleep(2**attempt)
-                    continue
-                return None
-        return None
+                    return file_upload_id
+
+                except Exception:
+                    if attempt < 2:
+                        time.sleep(2**attempt)
+                        continue
+                    return None
+            return None
+        finally:
+            if temp_dir is not None:
+                temp_dir.cleanup()
 
     def _figure_blocks(self, fig: FigureInfo, upload_id: str) -> list[dict]:
         """Build image blocks for one figure or table."""
