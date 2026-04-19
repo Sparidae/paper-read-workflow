@@ -175,6 +175,8 @@ def _process_paper(
             )
         # 在 Live 运行时打印，表格永久写入终端历史，不会被后续 Live 刷新覆盖
         progress.console.print(tbl)
+        if summary["tables_matplotlib"] == 0:
+            return True
         progress.stop()
         result = typer.confirm("继续进行 LLM 分析？", default=True)
         progress.start()

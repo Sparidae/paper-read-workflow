@@ -50,6 +50,7 @@ _LATEX_TEMPLATE = r"""\documentclass[border=6pt]{standalone}
 \usepackage{tabularx}
 \usepackage{tabulary}
 \usepackage{caption}
+\usepackage{xspace}
 \setlength{\textwidth}{@@TEXT_WIDTH@@}
 \setlength{\columnwidth}{\textwidth}
 \setlength{\linewidth}{\textwidth}
@@ -229,6 +230,36 @@ def _brace_delta(text: str) -> int:
     return text.count("{") - text.count("}")
 
 
+def _is_incomplete_macro_definition(block: str) -> bool:
+    patterns = (
+        r"\\newcommand\*?\s*(?:\{\\[A-Za-z@]+\}|\\[A-Za-z@]+)\s*$",
+        r"\\renewcommand\*?\s*(?:\{\\[A-Za-z@]+\}|\\[A-Za-z@]+)\s*$",
+        r"\\providecommand\*?\s*(?:\{\\[A-Za-z@]+\}|\\[A-Za-z@]+)\s*$",
+    )
+    return any(re.fullmatch(pattern, block.strip()) for pattern in patterns)
+
+
+def _macro_dedupe_key(block: str) -> str | None:
+    stripped = block.strip()
+    patterns = (
+        r"\\(?:newcommand|renewcommand|providecommand)\*?\s*(?:\{(\\[A-Za-z@]+)\}|(\\[A-Za-z@]+))",
+        r"\\def\s*(\\[A-Za-z@]+)",
+        r"\\DeclareMathOperator\*?\s*\{(\\[A-Za-z@]+)\}",
+        r"\\let\s*(\\[A-Za-z@]+)",
+        r"\\newcolumntype\s*\{([^}]+)\}",
+        r"\\definecolor\s*\{([^}]+)\}",
+        r"\\colorlet\s*\{([^}]+)\}",
+    )
+    for pattern in patterns:
+        m = re.match(pattern, stripped)
+        if not m:
+            continue
+        groups = [g for g in m.groups() if g]
+        if groups:
+            return groups[0]
+    return None
+
+
 def _extract_preamble_macros(tex: str) -> str:
     """
     Extract \\newcommand / \\def / \\DeclareMathOperator lines from the merged
@@ -248,7 +279,8 @@ def _extract_preamble_macros(tex: str) -> str:
         r"\let",
     )
     lines = preamble.splitlines()
-    macros: list[str] = []
+    macros: list[str | None] = []
+    macro_positions: dict[str, int] = {}
     i = 0
     while i < len(lines):
         s = lines[i].strip()
@@ -264,8 +296,15 @@ def _extract_preamble_macros(tex: str) -> str:
             block += "\n" + nxt
             brace_balance += _brace_delta(nxt)
             i += 1
+        if _is_incomplete_macro_definition(block):
+            continue
+        key = _macro_dedupe_key(block)
+        if key is not None and key in macro_positions:
+            macros[macro_positions[key]] = None
+        if key is not None:
+            macro_positions[key] = len(macros)
         macros.append(block)
-    return "\n".join(macros)
+    return "\n".join(block for block in macros if block)
 
 
 def _consume_balanced(text: str, start: int, open_char: str, close_char: str) -> int:
