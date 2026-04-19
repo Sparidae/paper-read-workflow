@@ -45,6 +45,13 @@ uv run ruff format src/
 uv run ruff check --fix src/
 ```
 
+## Table Rendering Compatibility
+
+- Table image rendering must prioritize maximum compatibility across papers.
+- Any new table parsing support or parser bug fix must be backward-compatible and must not break previously working table extraction/rendering behavior.
+- When extending table parsing logic, preserve the existing fallback chain and existing successful cases unless there is a deliberate, verified compatibility improvement.
+- For table-related changes, verify not only the target paper but also that existing papers with working tables do not regress.
+
 ## No Tests
 
 No test suite. Verify with `uv run paper-tool add --debug <url>` against a test Notion database.
