@@ -51,10 +51,5 @@ storage:
   # PDF 文件存储目录（相对于项目根目录，或绝对路径）
   papers_dir: "papers"
 
-# 引用量刷新配置
-citations:
-  # 距离上次成功刷新超过多少天后，导入完成时触发一次全库引用量刷新
-  refresh_interval_days: 7
-
 # Notion 数据库 schema 固定来自仓库根目录的 notion_schema.yaml。
 # 这里不再提供 Notion 字段覆盖配置。

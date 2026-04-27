@@ -148,14 +148,6 @@ class Config:
     def notion_database_title(self) -> str:
         return self._notion_config().get("database_title", "paper-tool Papers")
 
-    @property
-    def citations_refresh_interval_days(self) -> int:
-        raw = self._yaml.get("citations", {}).get("refresh_interval_days", 7)
-        try:
-            return max(1, int(raw))
-        except (TypeError, ValueError):
-            return 7
-
     # ── LLM ─────────────────────────────────────────────────────────────────
 
     @property
@@ -310,7 +302,6 @@ class Config:
             "Notion Parent Page ID", mask(os.getenv("NOTION_PARENT_PAGE_ID", ""))
         )
         table.add_row("Notion Status Type", self.notion_status_type)
-        table.add_row("引用量刷新间隔(天)", str(self.citations_refresh_interval_days))
         table.add_row("OpenAI Key", mask(os.getenv("OPENAI_API_KEY", "")))
         table.add_row(
             "OpenAI Base URL", os.getenv("OPENAI_BASE_URL", "") or "(官方默认)"

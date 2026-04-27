@@ -1,22 +1,15 @@
-"""Periodic citation refresh for the configured Notion database."""
+"""Citation refresh for the configured Notion database."""
 
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Callable
 
 import httpx
 
 from paper_tool.citations import extract_arxiv_id, query_semantic_scholar_batch
-from paper_tool.config import get_config
 from paper_tool.notion_service import NotionService
-from paper_tool.notion_setup import normalize_notion_id
-
-_STATE_FILENAME = ".citation_refresh_state.json"
 
 
 @dataclass(slots=True)
@@ -27,67 +20,6 @@ class CitationRefreshStats:
     no_data_pages: int = 0
     skipped_pages: int = 0
     failed_pages: int = 0
-
-
-def _state_path() -> Path:
-    return get_config().papers_dir / _STATE_FILENAME
-
-
-def _load_state(path: Path) -> dict:
-    if not path.exists():
-        return {"databases": {}}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            data.setdefault("databases", {})
-            return data
-    except Exception:
-        pass
-    return {"databases": {}}
-
-
-def _save_state(path: Path, state: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-
-
-def _db_state_key() -> str:
-    return normalize_notion_id(get_config().notion_database_id)
-
-
-def _last_refresh_at(state: dict) -> datetime | None:
-    raw = (
-        state.get("databases", {})
-        .get(_db_state_key(), {})
-        .get("last_citation_refresh_at", "")
-    )
-    if not raw:
-        return None
-    try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(UTC)
-    except ValueError:
-        return None
-
-
-def _mark_refresh_success(state: dict, now: datetime) -> dict:
-    databases = state.setdefault("databases", {})
-    databases[_db_state_key()] = {
-        "last_citation_refresh_at": now.astimezone(UTC)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    }
-    return state
-
-
-def _is_refresh_due(now: datetime, interval_days: int, state: dict) -> bool:
-    last = _last_refresh_at(state)
-    if last is None:
-        return True
-    return now >= last + timedelta(days=interval_days)
 
 
 def _stats_label(stats: CitationRefreshStats) -> str:
@@ -166,41 +98,9 @@ def refresh_all_citations() -> CitationRefreshStats:
 
 def maybe_refresh_citations(
     *,
-    force: bool = False,
     on_event: Callable[[dict], None] | None = None,
 ) -> bool:
     emit = on_event or (lambda _event: None)
-    cfg = get_config()
-    state_path = _state_path()
-    state = _load_state(state_path)
-    now = datetime.now(UTC)
-
-    if not force:
-        emit(
-            {
-                "type": "stage_start",
-                "stage": "check_citations_refresh",
-                "label": "检查引用量刷新间隔...",
-            }
-        )
-        if not _is_refresh_due(now, cfg.citations_refresh_interval_days, state):
-            emit(
-                {
-                    "type": "stage_done",
-                    "stage": "check_citations_refresh",
-                    "label": "未到刷新时间，跳过",
-                    "status": "ok",
-                }
-            )
-            return True
-        emit(
-            {
-                "type": "stage_done",
-                "stage": "check_citations_refresh",
-                "label": "达到刷新时间，开始刷新",
-                "status": "ok",
-            }
-        )
 
     emit(
         {
@@ -233,7 +133,6 @@ def maybe_refresh_citations(
         )
         return False
 
-    _save_state(state_path, _mark_refresh_success(state, now))
     emit(
         {
             "type": "stage_done",

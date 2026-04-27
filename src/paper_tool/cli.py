@@ -215,7 +215,7 @@ def _process_paper(
     return success
 
 
-def _run_citation_refresh(*, force: bool) -> bool:
+def _run_citation_refresh() -> bool:
     from paper_tool.citation_refresh import maybe_refresh_citations
 
     progress = Progress(
@@ -246,7 +246,7 @@ def _run_citation_refresh(*, force: bool) -> bool:
             )
 
     try:
-        success = maybe_refresh_citations(force=force, on_event=on_event)
+        success = maybe_refresh_citations(on_event=on_event)
     finally:
         try:
             progress.stop()
@@ -673,7 +673,7 @@ def chat(
 def refresh_citations() -> None:
     """立即刷新当前 Notion 数据库中的引用量。"""
     _ensure_notion_database_ready()
-    success = _run_citation_refresh(force=True)
+    success = _run_citation_refresh()
     if not success:
         raise typer.Exit(code=1)
 
