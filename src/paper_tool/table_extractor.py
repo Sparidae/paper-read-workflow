@@ -50,6 +50,7 @@ _LATEX_TEMPLATE = r"""\documentclass[border=6pt]{standalone}
 \usepackage{tabularx}
 \usepackage{tabulary}
 \usepackage{caption}
+\usepackage{pifont}
 \usepackage{xspace}
 \setlength{\textwidth}{@@TEXT_WIDTH@@}
 \setlength{\columnwidth}{\textwidth}
