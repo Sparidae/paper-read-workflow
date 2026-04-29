@@ -1,9 +1,31 @@
 r"""Extract paper tables from arXiv LaTeX source.
 
-Rendering pipeline:
-  1. Extract table metadata from the merged LaTeX source.
-  2. Prefer standalone LaTeX rendering to preserve table semantics/style.
-  3. Fall back to a simpler matplotlib redraw as the last resort.
+Supported table styles
+-----------------------
+Most papers use ``\begin{table}`` floats containing a ``tabular``, ``tabulary``,
+or ``tabularx`` environment.  A small minority use ``\pgfplotstabletypeset``
+(from the pgfplotstable package) which generates a table from an external data
+file without any tabular-like environment.
+
+Rendering pipeline
+------------------
+For tabular-based tables (the common case):
+  1. Compile the extracted tabular body with pdflatex in a standalone document.
+     Preamble macros (``\newcommand``, ``\definecolor``, …) are extracted and
+     injected; undefined commands from style packages (``\renewcommand``) are
+     stubbed; fallback stubs cover common citation / icon commands found in
+     table cells (``\citep``, ``\citet``, ``\parencite``, ``\faGithub``, …).
+  2. If pdflatex fails with the original body, retry with a safer variant
+     (``\resizebox`` / ``\scalebox`` / ``\adjustbox`` wrappers stripped,
+     ``center`` / ``\centering`` removed).
+  3. If both LaTeX attempts fail, fall back to matplotlib — parses tabular
+     rows, cleans cell markup, renders a booktabs-style PNG.
+
+For pgfplotstable-based tables:
+  1. Inline external data files (``\pgfplotstableread{file}``) so the
+     standalone compilation is self-contained.
+  2. Compile with pdflatex (no retry, no matplotlib fallback — there is no
+     tabular to parse).
 """
 
 from __future__ import annotations
@@ -19,17 +41,25 @@ from paper_tool.models import FigureInfo
 
 _MAX_FILE_BYTES = 18 * 1024 * 1024
 
-# Matches \begin{table} ... \end{table} (including table*)
+# Matches \begin{table} ... \end{table} (including table* for two-column floats).
+# Most papers wrap a tabular/tabulary/tabularx environment inside this float.
 _TABLE_ENV = re.compile(
     r"\\begin\{table\*?\}(?:\[[^\]]*\])?(.*?)\\end\{table\*?\}",
     re.DOTALL,
 )
 
-# Full tabular environment
+# Tabular-like environments found inside table floats.
+# Covers the three mainstream LaTeX table engines: tabular, tabulary, tabularx.
+# Does NOT match \pgfplotstabletypeset (handled separately).
 _TABULAR_FULL = re.compile(
     r"(\\begin\{(?:tabular|tabulary|tabularx)\*?\}(?:\{[^}]*\})?\{[^}]*\}.*?\\end\{(?:tabular|tabulary|tabularx)\*?\})",
     re.DOTALL,
 )
+
+# pgfplotstable-generated tables: \pgfplotstabletypeset reads data from an
+# external file (loaded via \pgfplotstableread) and renders a table without
+# any tabular environment.  Rare in ML papers (~1% of the corpus).
+_PGFPLOTSTABLE = re.compile(r"\\pgfplotstabletypeset")
 
 _LABEL = re.compile(r"\\label\{([^}]+)\}")
 _TEX_COMMENT = re.compile(r"(?<!\\)%.*")
@@ -51,16 +81,21 @@ _LATEX_TEMPLATE = r"""\documentclass[border=6pt]{standalone}
 \usepackage{tabulary}
 \usepackage{caption}
 \usepackage{pifont}
+\usepackage{pgfplotstable}
+\usepackage{siunitx}
 \usepackage{xspace}
 \setlength{\textwidth}{@@TEXT_WIDTH@@}
 \setlength{\columnwidth}{\textwidth}
 \setlength{\linewidth}{\textwidth}
 @@RENEW_STUBS@@
 @@PREAMBLE_MACROS@@
-% Fallback stubs: filled only if still undefined after preamble macros
+% Fallback stubs: filled only if still undefined after preamble macros.
+% Citation commands from natbib / biblatex commonly appear in table cells;
+% replaced with bracketed citation keys.
 \providecommand{\parencite}[1]{[#1]}
 \providecommand{\citep}[1]{[#1]}
 \providecommand{\citet}[1]{#1}
+% Icon commands from fontawesome / fontawesome5; replaced with nothing.
 \providecommand{\faGithub}{}
 \providecommand{\faEnvelopeO}{}
 \begin{document}
@@ -265,9 +300,17 @@ def _macro_dedupe_key(block: str) -> str | None:
 
 def _extract_preamble_macros(tex: str) -> str:
     """
-    Extract \\newcommand / \\def / \\DeclareMathOperator lines from the merged
-    .tex file preamble so custom macros used in tables resolve correctly.
-    Returns a block of LaTeX ready to drop into the standalone preamble.
+    Extract user-defined commands from the merged preamble.
+
+    Covers ``\\newcommand``, ``\\renewcommand``, ``\\def``,
+    ``\\DeclareMathOperator``, ``\\providecommand``, ``\\newcolumntype``,
+    ``\\definecolor``, ``\\colorlet``, ``\\let``.  Multi-line definitions
+    spanning brace-balanced blocks are captured as a whole.  Incomplete
+    definitions (header only, no body on the same line) are discarded.
+
+    Needed for both tabular and pgfplotstable tables: custom macros used in
+    table bodies (e.g. ``\\problemlong``) would be undefined in our standalone
+    template without these.
     """
     preamble = tex.split(r"\begin{document}", 1)[0]
     starters = (
@@ -375,9 +418,23 @@ def _strip_wrapper_commands(text: str, commands: tuple[str, ...]) -> str:
 
 
 def _prepare_table_body(env_text: str) -> str:
-    r"""
-    Keep the original table-local styling commands and tabular env, but strip
-    float-only metadata like ``\caption`` / ``\label``.
+    r"""Strip float metadata, keep the table body.
+
+    Used for both tabular-based AND pgfplotstable tables.  Strips only
+    float-level metadata (caption, label, vspace, negative hspace) that
+    would confuse the standalone compilation.  The actual table-generating
+    environment (tabular / tabulary / tabularx / pgfplotstabletypeset) is
+    preserved.
+
+    Edge cases handled:
+    - ``\\caption`` / ``\\caption*`` with optional ``[short]`` argument
+    - ``\\label``
+    - ``\\vspace`` / ``\\vspace*`` — negative values clip content;
+      positive values inject unnecessary whitespace
+    - ``\\hspace`` / ``\\hspace*`` with negative argument — shifts
+      content outside the bounding box horizontally
+    - Consecutive blank lines — collapsed to one (multiple blank lines
+      inside tabular column specs cause ``\\@@array`` parse errors)
     """
     body = _strip_wrapper_commands(env_text, ("caption", "caption*", "label"))
     # Strip \vspace / \vspace*: float-positioning tricks that shrink the
@@ -394,7 +451,18 @@ def _prepare_table_body(env_text: str) -> str:
 
 
 def _prepare_table_body_retry(env_text: str) -> str:
-    r"""Build a safer standalone variant without changing table semantics."""
+    r"""Build a safer body variant for the second pdflatex attempt.
+
+    Only used for tabular-based tables (not pgfplotstable — there are no
+    resizebox / center wrappers to strip there).
+
+    Edge cases resolved by this retry:
+    - ``\\resizebox`` / ``\\scalebox`` / ``\\adjustbox`` wrapping the
+      tabular — these sizing commands often reference ``\\textwidth``
+      which has a different value in the standalone document.
+    - ``\\begin{center}`` / ``\\end{center}`` / ``\\centering`` —
+      centering the tabular locally rather than in the minipage.
+    """
     body = _prepare_table_body(env_text)
     body = _strip_wrapper_commands(
         body,
@@ -408,6 +476,34 @@ def _prepare_table_body_retry(env_text: str) -> str:
     body = re.sub(r"\\end\{center\}", "", body)
     body = re.sub(r"\\centering\b", "", body)
     return re.sub(r"\n{3,}", "\n\n", body).strip()
+
+
+def _inline_pgf_data(body: str, source_dir: Path) -> str:
+    r"""Replace ``\pgfplotstableread{file}\macro`` with inline file contents.
+
+    pgfplotstable tables read data from external files via
+    ``\pgfplotstableread[options]{path/to/data.dat}\loadedmacro``.
+    Since ``_render_table_latex_source`` compiles in a temporary directory,
+    relative paths will not resolve.  We read the data file and inline its
+    content so the standalone LaTeX source is fully self-contained.
+    """
+
+    def _replace(m: re.Match) -> str:
+        options = m.group(1) or ""
+        filepath = m.group(2).strip()
+        macro = m.group(3)
+        data_path = source_dir / filepath
+        if data_path.is_file():
+            return f"\\pgfplotstableread[{options}]{{{data_path.read_text()}}}{macro}"
+        return m.group(0)
+
+    return re.sub(
+        r"\\pgfplotstableread(?:\[([^\]]*)\])?\{([^}]+)\}(\\[A-Za-z@]+)",
+        _replace,
+        body,
+        count=0,
+        flags=re.DOTALL,
+    )
 
 
 def _write_text(path: Path, content: str) -> None:
@@ -519,7 +615,11 @@ def _render_table_latex(
     retry_table_body: str | None = None,
 ) -> bool:
     """
-    Compile `table_body` as a standalone LaTeX document and rasterise to PNG.
+    Compile ``table_body`` as a standalone LaTeX document and rasterise to PNG.
+
+    Handles both tabular-based and pgfplotstable bodies.  For tabular tables,
+    a retry variant (``retry_table_body``) can be provided — if the first
+    compilation fails and the retry body differs, a second attempt is made.
 
     Returns True on success, False on any failure (missing pdflatex,
     compilation error, empty PDF, …).
@@ -575,6 +675,16 @@ def _clean_cell(text: str) -> str:
 
 
 def _parse_tabular_rows(env_text: str) -> list[list[str]]:
+    """Parse tabular rows for the matplotlib fallback path.
+
+    Only handles tabular / tabulary / tabularx.  pgfplotstable tables have
+    no parseable rows and will never reach this function (the matplotlib
+    fallback is gated by ``has_matplotlib_fallback`` in ``parse_tables``).
+
+    Strips booktabs rule commands, row/column colouring, and cleans cell
+    markup (``\\textbf``, ``\\multirow``, ``\\multicolumn``, etc.).
+    Returns a 2D list of plain-text cell content.
+    """
     tab_m = re.search(
         r"\\begin\{(?:tabular|tabulary|tabularx)\*?\}(?:\{[^}]*\})?\{[^}]*\}(.*?)\\end\{(?:tabular|tabulary|tabularx)\*?\}",
         env_text,
@@ -625,7 +735,14 @@ def _render_table_matplotlib(
     debug_dir: Path | None = None,
     stem: str = "table",
 ) -> bool:
-    """Fallback: render a parsed 2D table as a booktabs-style PNG with matplotlib."""
+    """Last-resort renderer for tabular-based tables.
+
+    Only reached when both pdflatex attempts failed.  Not available for
+    pgfplotstable tables (those have no parseable tabular rows).
+
+    Renders a booktabs-style PNG: top rule (1.5 pt), header-rule (0.8 pt),
+    bottom rule (1.5 pt), trimmed whitespace.
+    """
     try:
         import matplotlib
 
@@ -723,11 +840,9 @@ def parse_tables(
     Parse a merged LaTeX file and return FigureInfo objects (kind="table") for
     tables rendered as PNG images.
 
-    Rendering strategy per table:
-      1. Keep the original table-local LaTeX body and compile with pdflatex.
-      2. If LaTeX fails, write debug files into ``tables/debug`` and fall back
-         to matplotlib.
-      3. If ``force_rerender`` is True, ignore cached PNGs.
+    Two table styles are supported; see the module docstring for details.
+
+    Returns an empty list if ``tex_path`` does not exist or cannot be read.
     """
     if not tex_path.exists():
         return []
@@ -750,17 +865,38 @@ def parse_tables(
     for m in _TABLE_ENV.finditer(tex):
         env_text = _strip_tex_comments(m.group(1))
 
-        # Need at least a tabular environment inside
+        # ── Detect table style ─────────────────────────────────────────
+        # Two styles are supported:
+        #   1. Tabular-based: \begin{tabular} (or tabulary/tabularx)
+        #      inside \begin{table}.  This is the overwhelmingly common
+        #      case (≥99% of papers).
+        #   2. pgfplotstable-based: \pgfplotstabletypeset with no tabular
+        #      environment.  Rare (~1%); reads data from external files.
         tab_full = _TABULAR_FULL.search(env_text)
-        if not tab_full:
+        is_pgf = bool(_PGFPLOTSTABLE.search(env_text)) if not tab_full else False
+
+        if not tab_full and not is_pgf:
             continue
+
+        # ── Prepare table body ─────────────────────────────────────────
+        if is_pgf:
+            # pgfplotstable: keep the full body (caption/label/hspace/vspace
+            # already stripped by _prepare_table_body).  Inline external
+            # data files so compilation is self-contained (the temp
+            # directory used by pdflatex doesn't have access to them).
+            source_dir = tex_path.parent / "source"
+            table_body = _inline_pgf_data(_prepare_table_body(env_text), source_dir)
+            retry_table_body = None
+            has_matplotlib_fallback = False
+        else:
+            table_body = _prepare_table_body(env_text)
+            retry_table_body = _prepare_table_body_retry(env_text)
+            has_matplotlib_fallback = True
+        tabular_raw = tab_full.group(1) if tab_full else ""
 
         caption = _find_caption(env_text)
         label_m = _LABEL.search(env_text)
         label = label_m.group(1) if label_m else ""
-        table_body = _prepare_table_body(env_text)
-        retry_table_body = _prepare_table_body_retry(env_text)
-        tabular_raw = tab_full.group(1)
 
         tbl_number += 1
         stem = f"table_{tbl_number:02d}"
@@ -772,6 +908,10 @@ def parse_tables(
         else:
             output_path.unlink(missing_ok=True)
 
+            # ── LaTeX compilation ─────────────────────────────────
+            # Attempt with the original body; retry with a stripped
+            # variant only for tabular-based tables (pgfplotstable has
+            # no tabular wrappers to strip).
             ok = _render_table_latex(
                 table_body or tabular_raw,
                 output_path,
@@ -780,12 +920,17 @@ def parse_tables(
                 text_width=text_width,
                 debug_dir=debug_dir,
                 stem=stem,
-                retry_table_body=retry_table_body or tabular_raw,
+                retry_table_body=retry_table_body or tabular_raw
+                if retry_table_body is not None
+                else None,
             )
             if ok:
                 render_backend = "latex"
 
-            if not ok:
+            # ── matplotlib fallback ────────────────────────────────
+            # Only for tabular-based tables.  pgfplotstable has no
+            # parseable tabular rows, so it is LaTeX-only.
+            if not ok and has_matplotlib_fallback:
                 rows = _parse_tabular_rows(env_text)
                 ok = _render_table_matplotlib(
                     rows,
@@ -797,7 +942,6 @@ def parse_tables(
                     render_backend = "matplotlib"
 
             if not ok:
-                # Record failure in JSON log
                 _write_render_json(
                     debug_dir,
                     stem,
