@@ -59,6 +59,8 @@ _LATEX_TEMPLATE = r"""\documentclass[border=6pt]{standalone}
 @@PREAMBLE_MACROS@@
 % Fallback stubs: filled only if still undefined after preamble macros
 \providecommand{\parencite}[1]{[#1]}
+\providecommand{\citep}[1]{[#1]}
+\providecommand{\citet}[1]{#1}
 \providecommand{\faGithub}{}
 \providecommand{\faEnvelopeO}{}
 \begin{document}
