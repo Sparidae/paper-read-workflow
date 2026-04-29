@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Callable
 
 import httpx
 
 from paper_tool.citations import extract_arxiv_id, query_semantic_scholar_batch
+from paper_tool.config import PROJECT_ROOT
 from paper_tool.notion_service import NotionService
 
 
@@ -32,6 +35,31 @@ def _stats_label(stats: CitationRefreshStats) -> str:
         f"跳过 {stats.skipped_pages}，"
         f"失败 {stats.failed_pages}"
     )
+
+
+def _write_refresh_log(
+    stats: CitationRefreshStats | None = None,
+    *,
+    success: bool,
+    error: str | None = None,
+) -> None:
+    log_path = PROJECT_ROOT / ".refresh-citation.log"
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "success": success,
+    }
+    if error:
+        entry["error"] = error
+    if stats is not None:
+        entry["total_pages"] = stats.total_pages
+        entry["arxiv_pages"] = stats.arxiv_pages
+        entry["updated_pages"] = stats.updated_pages
+        entry["no_data_pages"] = stats.no_data_pages
+        entry["skipped_pages"] = stats.skipped_pages
+        entry["failed_pages"] = stats.failed_pages
+    with open(log_path, "a", encoding="utf-8") as f:
+        json.dump(entry, f, ensure_ascii=False)
+        f.write("\n")
 
 
 def refresh_all_citations() -> CitationRefreshStats:
@@ -112,6 +140,7 @@ def maybe_refresh_citations(
     try:
         stats = refresh_all_citations()
     except Exception as e:
+        _write_refresh_log(success=False, error=str(e))
         emit(
             {
                 "type": "stage_done",
@@ -123,6 +152,7 @@ def maybe_refresh_citations(
         return False
 
     if stats.failed_pages > 0:
+        _write_refresh_log(stats, success=False)
         emit(
             {
                 "type": "stage_done",
@@ -133,6 +163,7 @@ def maybe_refresh_citations(
         )
         return False
 
+    _write_refresh_log(stats, success=True)
     emit(
         {
             "type": "stage_done",
