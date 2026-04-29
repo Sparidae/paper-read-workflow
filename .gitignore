@@ -27,6 +27,7 @@ scripts/data/
 
 # 运行日志
 logs/
+.refresh-citation.log
 
 # Claude Code 本地工作目录
 .claude/worktrees/
