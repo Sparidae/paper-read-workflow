@@ -1,31 +1,30 @@
-r"""Extract paper tables from arXiv LaTeX source.
+r"""从 arXiv LaTeX 源码提取论文表格。
 
-Supported table styles
------------------------
-Most papers use ``\begin{table}`` floats containing a ``tabular``, ``tabulary``,
-or ``tabularx`` environment.  A small minority use ``\pgfplotstabletypeset``
-(from the pgfplotstable package) which generates a table from an external data
-file without any tabular-like environment.
+支持的表格类型
+--------------
+绝大多数论文使用 ``\begin{table}`` 浮动体包裹 ``tabular``、``tabulary`` 或
+``tabularx`` 环境。极少数使用 ``\pgfplotstabletypeset``（pgfplotstable 宏包），
+从外部数据文件生成表格，不包含任何 tabular 类环境。
 
-Rendering pipeline
-------------------
-For tabular-based tables (the common case):
-  1. Compile the extracted tabular body with pdflatex in a standalone document.
-     Preamble macros (``\newcommand``, ``\definecolor``, …) are extracted and
-     injected; undefined commands from style packages (``\renewcommand``) are
-     stubbed; fallback stubs cover common citation / icon commands found in
-     table cells (``\citep``, ``\citet``, ``\parencite``, ``\faGithub``, …).
-  2. If pdflatex fails with the original body, retry with a safer variant
-     (``\resizebox`` / ``\scalebox`` / ``\adjustbox`` wrappers stripped,
-     ``center`` / ``\centering`` removed).
-  3. If both LaTeX attempts fail, fall back to matplotlib — parses tabular
-     rows, cleans cell markup, renders a booktabs-style PNG.
+渲染流程
+--------
+基于 tabular 的表格（常见情况）：
+  1. 用 pdflatex 在 standalone 文档中编译提取的 tabular 主体。
+     提取并注入 preamble 中用户自定义的宏（``\newcommand``、``\definecolor`` 等）；
+     对样式宏包中 ``\renewcommand`` 产生的未定义命令创建 stub；
+     fallback stub 覆盖表格单元格中常见的引用/图标命令
+     （``\citep``、``\citet``、``\parencite``、``\faGithub`` 等）。
+  2. 若 pdflatex 编译原始 body 失败，用更安全的变体重试
+     （剥离 ``\resizebox`` / ``\scalebox`` / ``\adjustbox`` 包裹，
+     移除 ``center`` / ``\centering``）。
+  3. 若两次 LaTeX 尝试均失败，回退到 matplotlib —— 解析 tabular 行，
+     清洗单元格标记，渲染为 booktabs 风格的 PNG。
 
-For pgfplotstable-based tables:
-  1. Inline external data files (``\pgfplotstableread{file}``) so the
-     standalone compilation is self-contained.
-  2. Compile with pdflatex (no retry, no matplotlib fallback — there is no
-     tabular to parse).
+基于 pgfplotstable 的表格：
+  1. 内联外部数据文件（``\pgfplotstableread{file}``），
+     使 standalone 编译自包含。
+  2. 用 pdflatex 编译（无重试，无 matplotlib 回退——
+     没有 tabular 可供解析）。
 """
 
 from __future__ import annotations
@@ -41,24 +40,24 @@ from paper_tool.models import FigureInfo
 
 _MAX_FILE_BYTES = 18 * 1024 * 1024
 
-# Matches \begin{table} ... \end{table} (including table* for two-column floats).
-# Most papers wrap a tabular/tabulary/tabularx environment inside this float.
+# 匹配 \begin{table} ... \end{table}（含 table* 双栏浮动体）。
+# 绝大多数论文在此浮动体内包裹 tabular/tabulary/tabularx 环境。
 _TABLE_ENV = re.compile(
     r"\\begin\{table\*?\}(?:\[[^\]]*\])?(.*?)\\end\{table\*?\}",
     re.DOTALL,
 )
 
-# Tabular-like environments found inside table floats.
-# Covers the three mainstream LaTeX table engines: tabular, tabulary, tabularx.
-# Does NOT match \pgfplotstabletypeset (handled separately).
+# 表格浮动体内的 tabular 类环境。
+# 覆盖三种主流 LaTeX 表格引擎：tabular、tabulary、tabularx。
+# 不匹配 \pgfplotstabletypeset（单独处理）。
 _TABULAR_FULL = re.compile(
     r"(\\begin\{(?:tabular|tabulary|tabularx)\*?\}(?:\{[^}]*\})?\{[^}]*\}.*?\\end\{(?:tabular|tabulary|tabularx)\*?\})",
     re.DOTALL,
 )
 
-# pgfplotstable-generated tables: \pgfplotstabletypeset reads data from an
-# external file (loaded via \pgfplotstableread) and renders a table without
-# any tabular environment.  Rare in ML papers (~1% of the corpus).
+# pgfplotstable 生成的表格：\pgfplotstabletypeset 从外部文件读取数据
+# （通过 \pgfplotstableread 加载），直接渲染为表格，无 tabular 环境。
+# 在 ML 论文中极少见（语料中约 1%）。
 _PGFPLOTSTABLE = re.compile(r"\\pgfplotstabletypeset")
 
 _LABEL = re.compile(r"\\label\{([^}]+)\}")
@@ -89,13 +88,12 @@ _LATEX_TEMPLATE = r"""\documentclass[border=6pt]{standalone}
 \setlength{\linewidth}{\textwidth}
 @@RENEW_STUBS@@
 @@PREAMBLE_MACROS@@
-% Fallback stubs: filled only if still undefined after preamble macros.
-% Citation commands from natbib / biblatex commonly appear in table cells;
-% replaced with bracketed citation keys.
+% 预备定义（stub）：仅在 preamble 宏之后仍未定义时生效。
+% natbib / biblatex 引用命令，常见于表格单元格。替换为方括号引用键。
 \providecommand{\parencite}[1]{[#1]}
 \providecommand{\citep}[1]{[#1]}
 \providecommand{\citet}[1]{#1}
-% Icon commands from fontawesome / fontawesome5; replaced with nothing.
+% fontawesome / fontawesome5 图标命令，替换为空。
 \providecommand{\faGithub}{}
 \providecommand{\faEnvelopeO}{}
 \begin{document}
@@ -106,17 +104,17 @@ _LATEX_TEMPLATE = r"""\documentclass[border=6pt]{standalone}
 """
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── 辅助函数 ────────────────────────────────────────────────────────────────────
 
 
 def _extract_renewcommand_stubs(tex: str) -> str:
-    r"""Create ``\providecommand`` stubs for commands redefined in the preamble.
+    r"""为 preamble 中被 ``\renewcommand`` 重定义的命令创建 ``\providecommand`` 占位。
 
-    Without stubs, ``\renewcommand{\somecmd}`` fails if ``\somecmd`` was
-    defined by a style package not loaded in our standalone template.
+    没有占位时，若命令由未在我们 standalone 模板中加载的样式宏包定义，
+    ``\renewcommand{\somecmd}`` 会因命令未定义而编译失败。
     """
     preamble = tex.split(r"\begin{document}", 1)[0]
-    # Match both \renewcommand{\cmd} and \renewcommand\cmd (no-brace form)
+    # 同时匹配 \renewcommand{\cmd} 和 \renewcommand\cmd（无括号形式）
     matches = re.findall(
         r"\\renewcommand\*?\s*(?:\{(\\[A-Za-z@]+)\}|(\\[A-Za-z@]+))", preamble
     )
@@ -125,7 +123,7 @@ def _extract_renewcommand_stubs(tex: str) -> str:
 
 
 def _probe_textwidth(tex: str) -> str | None:
-    r"""Compile a minimal probe document to measure actual ``\textwidth``."""
+    r"""编译最小探测文档以实测 ``\textwidth``。"""
     if shutil.which("pdflatex") is None:
         return None
     preamble = (
@@ -174,7 +172,7 @@ def _probe_textwidth(tex: str) -> str | None:
 
 
 def _estimate_textwidth(tex: str) -> str:
-    r"""Heuristic estimation of ``\textwidth``."""
+    r"""通过启发式规则估算 ``\textwidth``。"""
     preamble = (
         tex.split(r"\begin{document}", 1)[0] if r"\begin{document}" in tex else ""
     )
@@ -221,7 +219,7 @@ def _estimate_textwidth(tex: str) -> str:
 
 
 def _detect_textwidth(tex: str) -> str:
-    r"""Determine the paper's ``\textwidth`` — probe first, heuristics as fallback."""
+    r"""确定论文的 ``\textwidth`` —— 优先探测，回退到启发式估算。"""
     probed = _probe_textwidth(tex)
     if probed is not None:
         return probed
@@ -264,7 +262,7 @@ def _find_caption(env_text: str) -> str:
 
 
 def _brace_delta(text: str) -> int:
-    """Rough brace-balance heuristic for multi-line macro extraction."""
+    """粗略的括号平衡估算，用于多行宏提取。"""
     return text.count("{") - text.count("}")
 
 
@@ -299,18 +297,15 @@ def _macro_dedupe_key(block: str) -> str | None:
 
 
 def _extract_preamble_macros(tex: str) -> str:
-    """
-    Extract user-defined commands from the merged preamble.
+    """从合并后的 preamble 中提取用户自定义的命令。
 
-    Covers ``\\newcommand``, ``\\renewcommand``, ``\\def``,
-    ``\\DeclareMathOperator``, ``\\providecommand``, ``\\newcolumntype``,
-    ``\\definecolor``, ``\\colorlet``, ``\\let``.  Multi-line definitions
-    spanning brace-balanced blocks are captured as a whole.  Incomplete
-    definitions (header only, no body on the same line) are discarded.
+    覆盖 ``\\newcommand``、``\\renewcommand``、``\\def``、
+    ``\\DeclareMathOperator``、``\\providecommand``、``\\newcolumntype``、
+    ``\\definecolor``、``\\colorlet``、``\\let``。
+    跨行的括号平衡定义作为整体捕获，不完整的定义（只有头部、同行无内容）丢弃。
 
-    Needed for both tabular and pgfplotstable tables: custom macros used in
-    table bodies (e.g. ``\\problemlong``) would be undefined in our standalone
-    template without these.
+    tabular 和 pgfplotstable 表格均需要此步骤：表格 body 中使用的自定义宏
+    （如 ``\\problemlong``）若无这些定义，在 standalone 模板中将无法解析。
     """
     preamble = tex.split(r"\begin{document}", 1)[0]
     starters = (
@@ -354,7 +349,7 @@ def _extract_preamble_macros(tex: str) -> str:
 
 
 def _consume_balanced(text: str, start: int, open_char: str, close_char: str) -> int:
-    """Return the index right after a balanced [] or {} group."""
+    """返回平衡括号组结束后的下一个索引（处理 [] 或 {} 分组）。"""
     if start >= len(text) or text[start] != open_char:
         return start
     depth = 0
@@ -372,11 +367,10 @@ def _consume_balanced(text: str, start: int, open_char: str, close_char: str) ->
 
 
 def _remove_command_calls(text: str, command: str) -> str:
-    r"""Remove occurrences of commands like ``\caption[short]{long}``.
+    r"""移除形如 ``\caption[short]{long}`` 的命令调用。
 
-    Consumes one optional ``[...]`` argument followed by ALL consecutive
-    ``{...}`` arguments (handles multi-arg commands like
-    ``\resizebox{width}{height}{content}``).
+    消耗一个可选 ``[...]`` 参数，然后消耗所有连续的 ``{...}`` 参数
+    （处理多参数命令，如 ``\resizebox{width}{height}{content}``）。
     """
     needle = f"\\{command}"
     parts: list[str] = []
@@ -390,13 +384,13 @@ def _remove_command_calls(text: str, command: str) -> str:
         parts.append(text[pos:idx])
         j = idx + len(needle)
 
-        # One optional [short] argument
+        # 一个可选 [short] 参数
         while j < len(text) and text[j].isspace():
             j += 1
         if j < len(text) and text[j] == "[":
             j = _consume_balanced(text, j, "[", "]")
 
-        # All consecutive {mandatory} arguments
+        # 所有连续的 {mandatory} 参数
         while True:
             while j < len(text) and text[j].isspace():
                 j += 1
@@ -418,50 +412,44 @@ def _strip_wrapper_commands(text: str, commands: tuple[str, ...]) -> str:
 
 
 def _prepare_table_body(env_text: str) -> str:
-    r"""Strip float metadata, keep the table body.
+    r"""剥离浮动体元数据，保留表格 body。
 
-    Used for both tabular-based AND pgfplotstable tables.  Strips only
-    float-level metadata (caption, label, vspace, negative hspace) that
-    would confuse the standalone compilation.  The actual table-generating
-    environment (tabular / tabulary / tabularx / pgfplotstabletypeset) is
-    preserved.
+    同时用于 tabular 类和 pgfplotstable 表格。仅剥离会在 standalone 编译中
+    产生问题的浮动体级元数据（caption、label、vspace、负 hspace），
+    实际生成表格的环境（tabular / tabulary / tabularx / pgfplotstabletypeset）
+    保留不动。
 
-    Edge cases handled:
-    - ``\\caption`` / ``\\caption*`` with optional ``[short]`` argument
+    覆盖的边界情况：
+    - ``\\caption`` / ``\\caption*``，含可选 ``[short]`` 参数
     - ``\\label``
-    - ``\\vspace`` / ``\\vspace*`` — negative values clip content;
-      positive values inject unnecessary whitespace
-    - ``\\hspace`` / ``\\hspace*`` with negative argument — shifts
-      content outside the bounding box horizontally
-    - Consecutive blank lines — collapsed to one (multiple blank lines
-      inside tabular column specs cause ``\\@@array`` parse errors)
+    - ``\\vspace`` / ``\\vspace*`` —— 负值裁剪内容，正值产生无意义空白
+    - ``\\hspace`` / ``\\hspace*`` 带负参数 —— 将内容水平移出裁剪区域
+    - 连续空行 —— 压缩为一行（tabular 列定义中出现多个空行
+      会导致 ``\\@@array`` 解析错误）
     """
     body = _strip_wrapper_commands(env_text, ("caption", "caption*", "label"))
-    # Strip \vspace / \vspace*: float-positioning tricks that shrink the
-    # standalone bounding box (negative → clips bottom; positive → useless
-    # whitespace).  Row extra-spacing inside tabular uses \\[Xpt] syntax.
+    # 剥离 \vspace / \vspace*：浮动体定位技巧，会收缩 standalone 包围盒
+    # （负值 → 裁剪底部；正值 → 无意义空白）。tabular 内部行间距使用 \\[Xpt] 语法。
     body = re.sub(r"\\vspace\*?\{[^}]*\}", "", body)
-    # Strip negative \hspace / \hspace*: can shift content outside the
-    # measured bounding box, clipping the rendered image horizontally.
+    # 剥离负 \hspace / \hspace*：会将内容水平移出测量包围盒，裁剪渲染图像。
     body = re.sub(r"\\hspace\*?\{-[^}]*\}", "", body)
-    # Collapse blank lines: inside tabular column specs they produce \par
-    # errors (\@@array failure); inside cells they're equally invalid.
+    # 压缩空行：tabular 列定义中出现多个空行会导致 \par 错误（\@@array 失败），
+    # 单元格内同样非法。
     body = re.sub(r"\n[ \t]*\n", "\n", body)
     return body.strip()
 
 
 def _prepare_table_body_retry(env_text: str) -> str:
-    r"""Build a safer body variant for the second pdflatex attempt.
+    r"""构建更安全的 body 变体，用于 pdflatex 第二次编译尝试。
 
-    Only used for tabular-based tables (not pgfplotstable — there are no
-    resizebox / center wrappers to strip there).
+    仅用于 tabular 类表格（pgfplotstable 无需此步骤——
+    不存在需要剥离的 resizebox / center 包裹）。
 
-    Edge cases resolved by this retry:
-    - ``\\resizebox`` / ``\\scalebox`` / ``\\adjustbox`` wrapping the
-      tabular — these sizing commands often reference ``\\textwidth``
-      which has a different value in the standalone document.
-    - ``\\begin{center}`` / ``\\end{center}`` / ``\\centering`` —
-      centering the tabular locally rather than in the minipage.
+    此重试步骤解决的边界情况：
+    - ``\\resizebox`` / ``\\scalebox`` / ``\\adjustbox`` 包裹 tabular
+      —— 这些尺寸调整命令通常引用的 ``\\textwidth`` 在 standalone 文档中不同
+    - ``\\begin{center}`` / ``\\end{center}`` / ``\\centering``
+      —— 在 tabular 本地居中，而非在 minipage 中居中
     """
     body = _prepare_table_body(env_text)
     body = _strip_wrapper_commands(
@@ -479,13 +467,11 @@ def _prepare_table_body_retry(env_text: str) -> str:
 
 
 def _inline_pgf_data(body: str, source_dir: Path) -> str:
-    r"""Replace ``\pgfplotstableread{file}\macro`` with inline file contents.
+    r"""将 ``\pgfplotstableread{file}\macro`` 替换为内联文件内容。
 
-    pgfplotstable tables read data from external files via
-    ``\pgfplotstableread[options]{path/to/data.dat}\loadedmacro``.
-    Since ``_render_table_latex_source`` compiles in a temporary directory,
-    relative paths will not resolve.  We read the data file and inline its
-    content so the standalone LaTeX source is fully self-contained.
+    pgfplotstable 表格通过 ``\pgfplotstableread[options]{path/to/data.dat}\loadedmacro``
+    从外部文件读取数据。由于 ``_render_table_latex_source`` 在临时目录中编译，
+    相对路径无法解析。将数据文件内容内联，使 standalone LaTeX 源码完全自包含。
     """
 
     def _replace(m: re.Match) -> str:
@@ -512,7 +498,7 @@ def _write_text(path: Path, content: str) -> None:
 
 
 def _write_render_json(debug_dir: Path, stem: str, data: dict) -> None:
-    """Persist a complete render-result record as JSON."""
+    """将完整渲染结果记录持久化为 JSON。"""
     debug_dir.mkdir(parents=True, exist_ok=True)
     (debug_dir / f"{stem}.json").write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -520,7 +506,7 @@ def _write_render_json(debug_dir: Path, stem: str, data: dict) -> None:
 
 
 def _read_render_json(debug_dir: Path, stem: str) -> dict:
-    """Load a previously written render-result record, or return {}."""
+    """加载之前写入的渲染结果记录，不存在则返回 {}。"""
     p = debug_dir / f"{stem}.json"
     if not p.exists():
         return {}
@@ -542,8 +528,7 @@ def _render_table_latex_source(
     stem: str = "table",
     status_note: str = "",
 ) -> bool:
-    # Always persist the LaTeX source before compiling so it survives both
-    # success and failure paths.
+    # 编译前始终持久化 LaTeX 源码，以便在成功和失败路径中保留。
     if debug_dir is not None:
         _write_text(debug_dir / f"{stem}.latex.tex", tex_src)
 
@@ -589,7 +574,7 @@ def _render_table_latex_source(
                 return False
 
             page = doc[0]
-            mat = fitz.Matrix(2.5, 2.5)  # ~225 dpi at standard resolution
+            mat = fitz.Matrix(2.5, 2.5)  # ~225 dpi
             pix = page.get_pixmap(matrix=mat, alpha=False)
             pix.save(str(output_path))
             doc.close()
@@ -614,15 +599,13 @@ def _render_table_latex(
     stem: str = "table",
     retry_table_body: str | None = None,
 ) -> bool:
-    """
-    Compile ``table_body`` as a standalone LaTeX document and rasterise to PNG.
+    """将 ``table_body`` 编译为 standalone LaTeX 文档并光栅化为 PNG。
 
-    Handles both tabular-based and pgfplotstable bodies.  For tabular tables,
-    a retry variant (``retry_table_body``) can be provided — if the first
-    compilation fails and the retry body differs, a second attempt is made.
+    同时处理 tabular 类和 pgfplotstable body。对于 tabular 表格，
+    可提供重试变体（``retry_table_body``）——若首次编译失败且重试 body 不同，
+    则进行第二次尝试。
 
-    Returns True on success, False on any failure (missing pdflatex,
-    compilation error, empty PDF, …).
+    成功返回 True，任何失败（pdflatex 缺失、编译错误、空 PDF 等）返回 False。
     """
     if not shutil.which("pdflatex"):
         return False
@@ -650,7 +633,7 @@ def _render_table_latex(
     return False
 
 
-# ── matplotlib fallback ───────────────────────────────────────────────────────
+# ── matplotlib 回退 ─────────────────────────────────────────────────────────────
 
 
 def _clean_cell(text: str) -> str:
@@ -675,15 +658,15 @@ def _clean_cell(text: str) -> str:
 
 
 def _parse_tabular_rows(env_text: str) -> list[list[str]]:
-    """Parse tabular rows for the matplotlib fallback path.
+    """解析 tabular 行，供 matplotlib 回退路径使用。
 
-    Only handles tabular / tabulary / tabularx.  pgfplotstable tables have
-    no parseable rows and will never reach this function (the matplotlib
-    fallback is gated by ``has_matplotlib_fallback`` in ``parse_tables``).
+    仅处理 tabular / tabulary / tabularx。pgfplotstable 表格没有可解析的行，
+    永远不会到达此函数（matplotlib 回退由 ``parse_tables`` 中的
+    ``has_matplotlib_fallback`` 条件控制）。
 
-    Strips booktabs rule commands, row/column colouring, and cleans cell
-    markup (``\\textbf``, ``\\multirow``, ``\\multicolumn``, etc.).
-    Returns a 2D list of plain-text cell content.
+    剥离 booktabs 横线命令、行列着色，清洗单元格标记
+    （``\\textbf``、``\\multirow``、``\\multicolumn`` 等）。
+    返回纯文本单元格内容的二维列表。
     """
     tab_m = re.search(
         r"\\begin\{(?:tabular|tabulary|tabularx)\*?\}(?:\{[^}]*\})?\{[^}]*\}(.*?)\\end\{(?:tabular|tabulary|tabularx)\*?\}",
@@ -735,13 +718,13 @@ def _render_table_matplotlib(
     debug_dir: Path | None = None,
     stem: str = "table",
 ) -> bool:
-    """Last-resort renderer for tabular-based tables.
+    """最后手段的渲染器，仅用于 tabular 类表格。
 
-    Only reached when both pdflatex attempts failed.  Not available for
-    pgfplotstable tables (those have no parseable tabular rows).
+    仅在两次 pdflatex 尝试均失败后到达。pgfplotstable 表格无法使用
+    （没有可解析的 tabular 行）。
 
-    Renders a booktabs-style PNG: top rule (1.5 pt), header-rule (0.8 pt),
-    bottom rule (1.5 pt), trimmed whitespace.
+    渲染 booktabs 风格 PNG：上线（1.5 pt）、表头线（0.8 pt）、
+    底线（1.5 pt），裁剪多余空白。
     """
     try:
         import matplotlib
@@ -827,7 +810,7 @@ def _render_table_matplotlib(
         return False
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
+# ── 公开 API ─────────────────────────────────────────────────────────────────────
 
 
 def parse_tables(
@@ -836,13 +819,11 @@ def parse_tables(
     max_tables: int = 10,
     force_rerender: bool = False,
 ) -> list[FigureInfo]:
-    """
-    Parse a merged LaTeX file and return FigureInfo objects (kind="table") for
-    tables rendered as PNG images.
+    """解析合并后的 LaTeX 文件，返回渲染为 PNG 的表格信息列表。
 
-    Two table styles are supported; see the module docstring for details.
+    支持两种表格类型，详见模块 docstring。
 
-    Returns an empty list if ``tex_path`` does not exist or cannot be read.
+    若 ``tex_path`` 不存在或无法读取，返回空列表。
     """
     if not tex_path.exists():
         return []
@@ -865,25 +846,23 @@ def parse_tables(
     for m in _TABLE_ENV.finditer(tex):
         env_text = _strip_tex_comments(m.group(1))
 
-        # ── Detect table style ─────────────────────────────────────────
-        # Two styles are supported:
-        #   1. Tabular-based: \begin{tabular} (or tabulary/tabularx)
-        #      inside \begin{table}.  This is the overwhelmingly common
-        #      case (≥99% of papers).
-        #   2. pgfplotstable-based: \pgfplotstabletypeset with no tabular
-        #      environment.  Rare (~1%); reads data from external files.
+        # ── 检测表格类型 ───────────────────────────────────────────
+        # 支持两种类型：
+        #   1. 基于 tabular：\begin{table} 内嵌 \begin{tabular}
+        #      （或 tabulary/tabularx）。绝大多数论文（≥99%）使用此方式。
+        #   2. 基于 pgfplotstable：\pgfplotstabletypeset，无 tabular
+        #      环境。极少见（~1%），从外部文件读取数据。
         tab_full = _TABULAR_FULL.search(env_text)
         is_pgf = bool(_PGFPLOTSTABLE.search(env_text)) if not tab_full else False
 
         if not tab_full and not is_pgf:
             continue
 
-        # ── Prepare table body ─────────────────────────────────────────
+        # ── 准备表格 body ──────────────────────────────────────────
         if is_pgf:
-            # pgfplotstable: keep the full body (caption/label/hspace/vspace
-            # already stripped by _prepare_table_body).  Inline external
-            # data files so compilation is self-contained (the temp
-            # directory used by pdflatex doesn't have access to them).
+            # pgfplotstable：保留完整 body（caption/label/hspace/vspace
+            # 已由 _prepare_table_body 剥离）。内联外部数据文件，
+            # 使编译自包含（pdflatex 使用的临时目录无法访问外部文件）。
             source_dir = tex_path.parent / "source"
             table_body = _inline_pgf_data(_prepare_table_body(env_text), source_dir)
             retry_table_body = None
@@ -908,10 +887,9 @@ def parse_tables(
         else:
             output_path.unlink(missing_ok=True)
 
-            # ── LaTeX compilation ─────────────────────────────────
-            # Attempt with the original body; retry with a stripped
-            # variant only for tabular-based tables (pgfplotstable has
-            # no tabular wrappers to strip).
+            # ── LaTeX 编译 ──────────────────────────────────────
+            # 用原始 body 尝试编译；仅对 tabular 表格用剥离变体重试
+            # （pgfplotstable 没有需要剥离的 tabular 包裹）。
             ok = _render_table_latex(
                 table_body or tabular_raw,
                 output_path,
@@ -927,9 +905,9 @@ def parse_tables(
             if ok:
                 render_backend = "latex"
 
-            # ── matplotlib fallback ────────────────────────────────
-            # Only for tabular-based tables.  pgfplotstable has no
-            # parseable tabular rows, so it is LaTeX-only.
+            # ── matplotlib 回退 ─────────────────────────────────
+            # 仅用于 tabular 类表格。pgfplotstable 没有可解析的
+            # tabular 行，因此仅走 LaTeX 路线。
             if not ok and has_matplotlib_fallback:
                 rows = _parse_tabular_rows(env_text)
                 ok = _render_table_matplotlib(
@@ -970,7 +948,7 @@ def parse_tables(
             tbl_number -= 1
             continue
 
-        # Read the LaTeX source that was compiled (if available)
+        # 读取编译时使用的 LaTeX 源码（如有）
         latex_tex_path = debug_dir / f"{stem}.latex.tex"
         latex_source = (
             latex_tex_path.read_text(encoding="utf-8", errors="replace")
