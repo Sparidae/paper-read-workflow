@@ -451,24 +451,21 @@ papers/<paper_id>_<title>/
 
 ## 模型切换
 
-项目通过 `litellm` 做模型抽象，通常只需要改 `config.yaml`：
+项目使用 OpenAI 兼容接口，只需在 `config.yaml` 中设置模型名，并在 `.env` 中配置 `OPENAI_API_KEY` 和可选的 `OPENAI_BASE_URL`：
 
 ```yaml
 llm:
-  model: "openai/gpt-4o"
+  model: "gpt-4o"
 ```
 
 常见示例：
 
 ```yaml
 llm:
-  model: "openai/gpt-4o"
-  # model: "openai/deepseek-chat"
-  # model: "openai/moonshot-v1-8k"
-  # model: "openai/qwen-max"
-  # model: "anthropic/claude-3-5-sonnet-20241022"
-  # model: "gemini/gemini-2.0-flash"
-  # model: "ollama/qwen2.5:72b"
+  model: "gpt-4o"
+  # model: "deepseek-chat"
+  # model: "moonshot-v1-8k"
+  # model: "qwen-max"
 ```
 
 如果是 OpenAI 兼容接口，记得在 `.env` 设置：

@@ -152,7 +152,7 @@ class Config:
 
     @property
     def llm_model(self) -> str:
-        return self._yaml.get("llm", {}).get("model", "openai/gpt-4o")
+        return self._yaml.get("llm", {}).get("model", "gpt-4o")
 
     def _load_prompt(self, key: str) -> str | None:
         """

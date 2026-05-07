@@ -68,7 +68,9 @@ def with_retry(
 
     Use a lambda or ``functools.partial`` to capture arguments::
 
-        response = with_retry(lambda: litellm.completion(**kwargs), max_attempts=3)
+        response = with_retry(
+            lambda: client.chat.completions.create(**kwargs), max_attempts=3
+        )
     """
     last_exc: Exception | None = None
     for attempt in range(max_attempts):

@@ -132,9 +132,6 @@ class ChatSession:
             "max_tokens": 4096,
             "temperature": self._cfg.llm_temperature,
         }
-        if self._cfg.openai_base_url:
-            kwargs["api_base"] = self._cfg.openai_base_url
-
         log.info(
             "Chat ask  messages=%d  question=%s",
             len(all_messages),

@@ -197,9 +197,6 @@ class LLMClassifier:
             "max_tokens": self._cfg.llm_classifier_max_tokens,
             "temperature": self._cfg.llm_temperature,
         }
-        if self._cfg.openai_base_url:
-            kwargs["api_base"] = self._cfg.openai_base_url
-
         messages: list[dict] = kwargs.pop("messages")
         max_attempts = 3
         last_exc: Exception = RuntimeError("unreachable")

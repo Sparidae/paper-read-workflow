@@ -155,15 +155,17 @@ def completion_to_text(
     on_token: Callable[[str], None] | None = None,
 ) -> CompletionResult:
     """
-    Run litellm completion and normalize text extraction.
+    Run OpenAI completion and normalize text extraction.
 
     Three modes:
-    - on_token provided  → stream from litellm, deliver each token via on_token callback,
-                           no StreamWindow (used by pipeline.py for web/headless callers)
-    - stream=True        → stream from litellm into a Rich StreamWindow (CLI use)
-    - stream=False       → non-streaming litellm call
+    - on_token provided  → stream from OpenAI, deliver each token via on_token
+                           callback, no StreamWindow (pipeline.py web/headless)
+    - stream=True        → stream from OpenAI into a Rich StreamWindow (CLI)
+    - stream=False       → non-streaming OpenAI call
     """
-    import litellm
+    from openai import OpenAI
+
+    _client = OpenAI()
 
     # ── Mode 1: callback-based streaming (no terminal UI) ─────────────────────
     if on_token is not None:
@@ -174,7 +176,7 @@ def completion_to_text(
         content_parts: list[str] = []  # non-reasoning content only
         finish_reason: str | None = None
 
-        for chunk in litellm.completion(**stream_kwargs):
+        for chunk in _client.chat.completions.create(**stream_kwargs):
             choices = getattr(chunk, "choices", None) or []
             if not choices:
                 continue
@@ -208,7 +210,7 @@ def completion_to_text(
 
     # ── Mode 2: non-streaming ──────────────────────────────────────────────────
     if not stream:
-        response = litellm.completion(**request_kwargs)
+        response = _client.chat.completions.create(**request_kwargs)
         choice = response.choices[0]
         raw = _extract_final_text(choice.message).strip()
         return CompletionResult(
@@ -225,7 +227,7 @@ def completion_to_text(
     finish_reason = None
 
     with StreamWindow(stream_title, height=stream_height) as window:
-        for chunk in litellm.completion(**stream_kwargs):
+        for chunk in _client.chat.completions.create(**stream_kwargs):
             choices = getattr(chunk, "choices", None) or []
             if not choices:
                 continue

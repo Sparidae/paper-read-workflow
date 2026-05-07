@@ -113,8 +113,6 @@ def _llm_call(
         "max_tokens": max_tokens or cfg.llm_translator_max_tokens,
         "temperature": cfg.llm_temperature,
     }
-    if cfg.openai_base_url:
-        kwargs["api_base"] = cfg.openai_base_url
     stream_enabled = (stream or cfg.llm_stream_window) and on_token is None
     result = completion_to_text(
         request_kwargs=kwargs,
@@ -294,9 +292,6 @@ class LLMAnalyzer:
             "max_tokens": self._cfg.llm_max_output_tokens,
             "temperature": self._cfg.llm_temperature,
         }
-        if self._cfg.openai_base_url:
-            kwargs["api_base"] = self._cfg.openai_base_url
-
         try:
             response = _with_retry(
                 lambda: completion_to_text(

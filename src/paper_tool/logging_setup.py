@@ -78,7 +78,7 @@ def setup_logging(log_dir: Path | None = None, keep_days: int = 30) -> None:
     handler.setLevel(logging.INFO)
 
     # Only attach handler to our own namespace — avoids pulling in
-    # every third-party DEBUG message (LiteLLM, httpx, etc.) that
+    # every third-party DEBUG message (httpx, openai, etc.) that
     # would otherwise flood the terminal via their own StreamHandlers
     # when the root logger level is lowered.
     pkg_logger = logging.getLogger("paper_tool")

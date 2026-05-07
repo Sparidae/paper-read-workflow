@@ -73,9 +73,6 @@ class LLMSummarizer:
             "max_tokens": self._cfg.llm_summarizer_max_tokens,
             "temperature": self._cfg.llm_temperature,
         }
-        if self._cfg.openai_base_url:
-            kwargs["api_base"] = self._cfg.openai_base_url
-
         stream_enabled = (stream or self._cfg.llm_stream_window) and on_token is None
         try:
             result = _with_retry(
