@@ -451,22 +451,21 @@ papers/<paper_id>_<title>/
 
 ## 模型切换
 
-项目使用 OpenAI 兼容接口，只需在 `config.yaml` 中设置模型名，并在 `.env` 中配置 `OPENAI_API_KEY` 和可选的 `OPENAI_BASE_URL`：
+项目使用 OpenAI 兼容接口，所有 LLM 配置集中在 `.env` 中：
 
-```yaml
-llm:
-  model: "gpt-4o"
+```bash
+# 文本模型
+OPENAI_MODEL=gpt-4o
+OPENAI_API_KEY=sk-xxx
+OPENAI_BASE_URL=https://api.openai.com/v1   # 留空=官方，兼容接口填对应地址
+
+# 多模态/视觉模型（可选，不填则复用文本配置）
+# OPENAI_VISION_MODEL=gpt-4o
+# OPENAI_VISION_API_KEY=sk-xxx
+# OPENAI_VISION_BASE_URL=https://api.openai.com/v1
 ```
 
-常见示例：
-
-```yaml
-llm:
-  model: "gpt-4o"
-  # model: "deepseek-chat"
-  # model: "moonshot-v1-8k"
-  # model: "qwen-max"
-```
+常见模型：`gpt-4o`、`deepseek-chat`、`moonshot-v1-8k`、`qwen-max`
 
 如果是 OpenAI 兼容接口，记得在 `.env` 设置：
 

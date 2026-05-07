@@ -152,7 +152,12 @@ class Config:
 
     @property
     def llm_model(self) -> str:
-        return self._yaml.get("llm", {}).get("model", "gpt-4o")
+        return os.getenv("OPENAI_MODEL", "gpt-4o")
+
+    @property
+    def llm_vision_model(self) -> str:
+        """Vision/multimodal model. Falls back to OPENAI_MODEL if not set."""
+        return os.getenv("OPENAI_VISION_MODEL") or self.llm_model
 
     def _load_prompt(self, key: str) -> str | None:
         """
@@ -259,13 +264,6 @@ class Config:
             path = self._config_dir / path
         path.mkdir(parents=True, exist_ok=True)
         return path
-
-    # ── LLM model selection ────────────────────────────────────────────────
-
-    @property
-    def llm_vision_model(self) -> str:
-        """Vision/multimodal model. Falls back to llm_model if not set."""
-        return self._yaml.get("llm", {}).get("vision_model") or self.llm_model
 
     # ── OpenAI-compatible endpoints ──────────────────────────────────────────
 

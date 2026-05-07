@@ -4,13 +4,7 @@
 
 # LLM 配置
 llm:
-  # 使用的模型（OpenAI 兼容格式）
-  #   OpenAI 官方:     "gpt-4o"
-  #   DeepSeek:        "deepseek-chat"
-  #   Kimi:            "moonshot-v1-8k"
-  model: "gpt-4o"
-  # 多模态/视觉模型（可选，不填则使用上述 model）
-  # vision_model: "gpt-4o"
+  # 模型名称在 .env 的 OPENAI_MODEL / OPENAI_VISION_MODEL 中配置
   # 分析论文时最大输入 token 数（防止超出模型限制，超出时截断 PDF 文本）
   max_input_tokens: 100000
   # 生成笔记时最大输出 token 数
