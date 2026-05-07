@@ -306,8 +306,6 @@ class Config:
         table.add_row(
             "OpenAI Base URL", os.getenv("OPENAI_BASE_URL", "") or "(官方默认)"
         )
-        table.add_row("Anthropic Key", mask(os.getenv("ANTHROPIC_API_KEY", "")))
-        table.add_row("Gemini Key", mask(os.getenv("GEMINI_API_KEY", "")))
 
         console.print(table)
 
