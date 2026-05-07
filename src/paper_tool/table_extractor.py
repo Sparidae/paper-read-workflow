@@ -296,30 +296,31 @@ def _macro_dedupe_key(block: str) -> str | None:
     return None
 
 
-def _extract_preamble_macros(tex: str) -> str:
-    """从合并后的 preamble 中提取用户自定义的命令。
+_DEFAULT_MACRO_STARTERS = (
+    r"\newcommand",
+    r"\renewcommand",
+    r"\def",
+    r"\DeclareMathOperator",
+    r"\providecommand",
+    r"\newcolumntype",
+    r"\definecolor",
+    r"\colorlet",
+    r"\let",
+)
+
+
+def _extract_macros(
+    text: str, starters: tuple[str, ...] = _DEFAULT_MACRO_STARTERS
+) -> str:
+    """从任意文本中提取用户自定义的命令。
 
     覆盖 ``\\newcommand``、``\\renewcommand``、``\\def``、
     ``\\DeclareMathOperator``、``\\providecommand``、``\\newcolumntype``、
     ``\\definecolor``、``\\colorlet``、``\\let``。
     跨行的括号平衡定义作为整体捕获，不完整的定义（只有头部、同行无内容）丢弃。
-
-    tabular 和 pgfplotstable 表格均需要此步骤：表格 body 中使用的自定义宏
-    （如 ``\\problemlong``）若无这些定义，在 standalone 模板中将无法解析。
+    去重逻辑：同名宏保留最后出现的定义。
     """
-    preamble = tex.split(r"\begin{document}", 1)[0]
-    starters = (
-        r"\newcommand",
-        r"\renewcommand",
-        r"\def",
-        r"\DeclareMathOperator",
-        r"\providecommand",
-        r"\newcolumntype",
-        r"\definecolor",
-        r"\colorlet",
-        r"\let",
-    )
-    lines = preamble.splitlines()
+    lines = text.splitlines()
     macros: list[str | None] = []
     macro_positions: dict[str, int] = {}
     i = 0
@@ -346,6 +347,12 @@ def _extract_preamble_macros(tex: str) -> str:
             macro_positions[key] = len(macros)
         macros.append(block)
     return "\n".join(block for block in macros if block)
+
+
+def _extract_preamble_macros(tex: str) -> str:
+    """从合并后的 preamble 中提取用户自定义的命令。"""
+    preamble = tex.split(r"\begin{document}", 1)[0]
+    return _extract_macros(preamble)
 
 
 def _consume_balanced(text: str, start: int, open_char: str, close_char: str) -> int:
@@ -836,9 +843,11 @@ def parse_tables(
     tables_dir.mkdir(parents=True, exist_ok=True)
     debug_dir = tex_path.parent / "debug"
     debug_dir.mkdir(parents=True, exist_ok=True)
-    preamble_macros = _extract_preamble_macros(tex)
+    preamble = tex.split(r"\begin{document}", 1)[0]
+    preamble_macros = _extract_macros(preamble)
     renew_stubs = _extract_renewcommand_stubs(tex)
     text_width = _detect_textwidth(tex)
+    doc_pos = tex.find(r"\begin{document}")
 
     results: list[FigureInfo] = []
     tbl_number = 0
@@ -887,13 +896,23 @@ def parse_tables(
         else:
             output_path.unlink(missing_ok=True)
 
+            # ── 提取 body 中该表之前的宏定义 ───────────────────
+            # 少数论文在 document body 内（\begin{document} 之后）
+            # 定义 \definecolor / \newcommand / \def，紧贴在表格之前。
+            # 仅扫描 preamble 会漏掉这些定义，导致 LaTeX 编译失败。
+            if doc_pos != -1 and doc_pos < m.start():
+                body_before = tex[doc_pos : m.start()]
+                table_macros = _extract_macros(preamble + "\n" + body_before)
+            else:
+                table_macros = preamble_macros
+
             # ── LaTeX 编译 ──────────────────────────────────────
             # 用原始 body 尝试编译；仅对 tabular 表格用剥离变体重试
             # （pgfplotstable 没有需要剥离的 tabular 包裹）。
             ok = _render_table_latex(
                 table_body or tabular_raw,
                 output_path,
-                preamble_macros,
+                table_macros,
                 renew_stubs=renew_stubs,
                 text_width=text_width,
                 debug_dir=debug_dir,
