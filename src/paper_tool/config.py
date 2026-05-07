@@ -260,12 +260,29 @@ class Config:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    # ── OpenAI-compatible endpoint ───────────────────────────────────────────
+    # ── LLM model selection ────────────────────────────────────────────────
+
+    @property
+    def llm_vision_model(self) -> str:
+        """Vision/multimodal model. Falls back to llm_model if not set."""
+        return self._yaml.get("llm", {}).get("vision_model") or self.llm_model
+
+    # ── OpenAI-compatible endpoints ──────────────────────────────────────────
 
     @property
     def openai_base_url(self) -> str | None:
         """Custom OpenAI-compatible base URL (e.g. DeepSeek, Kimi, vLLM, etc.)."""
         return os.getenv("OPENAI_BASE_URL") or None
+
+    @property
+    def openai_vision_api_key(self) -> str | None:
+        """API key for vision/multimodal tasks. Falls back to OPENAI_API_KEY."""
+        return os.getenv("OPENAI_VISION_API_KEY") or os.getenv("OPENAI_API_KEY") or None
+
+    @property
+    def openai_vision_base_url(self) -> str | None:
+        """Base URL for vision/multimodal tasks. Falls back to OPENAI_BASE_URL."""
+        return os.getenv("OPENAI_VISION_BASE_URL") or self.openai_base_url
 
     # ── OpenReview ───────────────────────────────────────────────────────────
 
@@ -290,7 +307,8 @@ class Config:
         def mask(val: str) -> str:
             return val[:8] + "..." if len(val) > 8 else ("(未设置)" if not val else val)
 
-        table.add_row("LLM 模型", self.llm_model)
+        table.add_row("LLM 模型 (文本)", self.llm_model)
+        table.add_row("LLM 模型 (视觉)", self.llm_vision_model)
         table.add_row("最大输入 Token", str(self.llm_max_input_tokens))
         table.add_row("最大输出 Token", str(self.llm_max_output_tokens))
         table.add_row("LLM 流式输出", "开启" if self.llm_stream_window else "关闭")
@@ -302,9 +320,19 @@ class Config:
             "Notion Parent Page ID", mask(os.getenv("NOTION_PARENT_PAGE_ID", ""))
         )
         table.add_row("Notion Status Type", self.notion_status_type)
-        table.add_row("OpenAI Key", mask(os.getenv("OPENAI_API_KEY", "")))
+        table.add_row("OpenAI Key (文本)", mask(os.getenv("OPENAI_API_KEY", "")))
         table.add_row(
-            "OpenAI Base URL", os.getenv("OPENAI_BASE_URL", "") or "(官方默认)"
+            "OpenAI Base URL (文本)",
+            os.getenv("OPENAI_BASE_URL", "") or "(官方默认)",
+        )
+        vis_key = self.openai_vision_api_key
+        table.add_row("OpenAI Key (视觉)", mask(vis_key) if vis_key else "(复用文本)")
+        vis_url = self.openai_vision_base_url
+        table.add_row(
+            "OpenAI Base URL (视觉)",
+            vis_url or "(复用文本)"
+            if not os.getenv("OPENAI_VISION_BASE_URL")
+            else vis_url,
         )
 
         console.print(table)

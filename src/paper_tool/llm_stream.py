@@ -146,6 +146,33 @@ def _extract_delta_text(choice_delta: Any) -> str:
     return ""
 
 
+_text_client: Any = None
+_vision_client: Any = None
+
+
+def _get_client(use_vision: bool = False) -> Any:
+    """Lazily create and cache OpenAI clients."""
+    from openai import OpenAI
+
+    from paper_tool.config import get_config
+
+    global _text_client, _vision_client
+    if use_vision:
+        if _vision_client is None:
+            cfg = get_config()
+            kwargs: dict[str, Any] = {}
+            if cfg.openai_vision_api_key:
+                kwargs["api_key"] = cfg.openai_vision_api_key
+            if cfg.openai_vision_base_url:
+                kwargs["base_url"] = cfg.openai_vision_base_url
+            _vision_client = OpenAI(**kwargs)
+        return _vision_client
+
+    if _text_client is None:
+        _text_client = OpenAI()
+    return _text_client
+
+
 def completion_to_text(
     *,
     request_kwargs: dict[str, Any],
@@ -153,6 +180,7 @@ def completion_to_text(
     stream_title: str = "",
     stream_height: int = 8,
     on_token: Callable[[str], None] | None = None,
+    use_vision: bool = False,
 ) -> CompletionResult:
     """
     Run OpenAI completion and normalize text extraction.
@@ -162,10 +190,10 @@ def completion_to_text(
                            callback, no StreamWindow (pipeline.py web/headless)
     - stream=True        → stream from OpenAI into a Rich StreamWindow (CLI)
     - stream=False       → non-streaming OpenAI call
-    """
-    from openai import OpenAI
 
-    _client = OpenAI()
+    Set use_vision=True to use the vision endpoint (OPENAI_VISION_* env vars).
+    """
+    _client = _get_client(use_vision)
 
     # ── Mode 1: callback-based streaming (no terminal UI) ─────────────────────
     if on_token is not None:
