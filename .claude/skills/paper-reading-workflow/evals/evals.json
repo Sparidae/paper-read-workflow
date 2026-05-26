@@ -4,38 +4,38 @@
     {
       "id": 1,
       "prompt": "帮我把这篇论文加到Notion里 https://arxiv.org/abs/2301.12345",
-      "expected_output": "Claude guides the user to use 'uv run paper-tool add <url>' command, mentions the --debug and --stream flags, and explains that the pipeline will download PDF, extract text, render figures/tables, run LLM analysis, and write to Notion.",
+      "expected_output": "Agent imports PipelineContext and paper_tool modules, references download_paper() or composable pipeline steps, explains what each step does, and provides actionable Python code.",
       "files": [],
       "expectations": [
-        "Mentions 'paper-tool add' command",
-        "References the project's uv-based setup",
-        "Explains the pipeline steps or points to relevant sections of the skill",
-        "Mentions --debug flag for troubleshooting"
+        "References PipelineContext.from_config() or imports from paper_tool",
+        "Mentions download_paper() or composable pipeline step functions",
+        "Explains what the pipeline does (download, extract, analyze, write to Notion)",
+        "Response is actionable with importable/callable Python code"
       ]
     },
     {
       "id": 2,
       "prompt": "论文的图表渲染失败了，table显示的是matplotlib降级版本，很难看。怎么调试？",
-      "expected_output": "Claude uses the skill to guide the user through the LaTeX debugging workflow: check debug/ artifacts, use debug-table.sh to isolate the table, identify the failure from the log, apply the fix pattern from latex-failure-patterns.md, and verify with --force --rerender-tables.",
+      "expected_output": "Agent guides through the LaTeX debugging workflow: check debug/ artifacts, use debug-table.sh to isolate the table, identify the failure from the log, apply the fix pattern from latex-failure-patterns.md, and verify with --force --rerender-tables.",
       "files": [],
       "expectations": [
-        "Points to papers/<paper_dir>/debug/ for artifacts",
-        "Mentions debug-table.sh script to isolate the table",
-        "References latex-failure-patterns.md for common fixes",
-        "Explains how to re-import after fixing (--force --rerender-tables)",
+        "Points to papers/<paper_dir>/debug/ for diagnostic artifacts",
+        "Mentions debug-table.sh script for isolation",
+        "References latex-failure-patterns.md or common failure patterns",
+        "Explains re-import after fixing (--force --rerender-tables)",
         "Mentions regression verification on previously-working papers"
       ]
     },
     {
       "id": 3,
       "prompt": "我有一个markdown文件里面有20篇论文链接，想全部导入Notion。但有些可能会失败，我不想半路停下来。",
-      "expected_output": "Claude suggests 'paper-tool batch <file> --continue-on-error', explains it will skip failures and keep going, and mentions that failed papers can be debugged individually afterward with --debug.",
+      "expected_output": "Agent shows how to iterate over URLs in a try/except loop, composing pipeline steps per paper, with individual error handling so failures don't stop the batch.",
       "files": [],
       "expectations": [
-        "Mentions 'paper-tool batch <file>' command",
-        "Recommends --continue-on-error flag for resilience",
-        "Explains how to re-run individual failures with --debug",
-        "References the batch workflow from the skill"
+        "Mentions iterating over URLs in a loop or batch processing pattern",
+        "Recommends try/except per paper for resilience (equivalent to --continue-on-error)",
+        "Explains how to re-run or debug individual failures",
+        "References the batch workflow from the skill or shows composable step functions"
       ]
     }
   ]
