@@ -1,0 +1,9 @@
+{
+  "expectations": [
+    {"text": "Mentions 'paper-tool add' command", "passed": true, "evidence": "Explicitly shows 'uv run paper-tool add https://arxiv.org/abs/2301.12345'"},
+    {"text": "Mentions at least one flag (--debug, --stream, or --force)", "passed": true, "evidence": "Mentions --debug, --skip-llm, and --force flags"},
+    {"text": "Explains what the pipeline does", "passed": true, "evidence": "Lists 5-step pipeline: PDF下载, 文本提取, 图表渲染, LLM分析, 写入Notion"},
+    {"text": "Response is actionable with copy-pasteable command", "passed": true, "evidence": "Multiple copy-pasteable bash commands provided"}
+  ],
+  "summary": {"passed": 4, "failed": 0, "total": 4, "pass_rate": 1.0}
+}

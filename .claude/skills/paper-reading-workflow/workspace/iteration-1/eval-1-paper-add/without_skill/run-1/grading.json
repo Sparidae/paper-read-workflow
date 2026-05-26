@@ -1,0 +1,9 @@
+{
+  "expectations": [
+    {"text": "Mentions 'paper-tool add' command", "passed": true, "evidence": "Shows 'uv run paper-tool add https://arxiv.org/abs/2301.12345'"},
+    {"text": "Mentions at least one flag (--debug, --stream, or --force)", "passed": false, "evidence": "Only shows the basic command with no flags. No mention of --debug, --stream, or --force"},
+    {"text": "Explains what the pipeline does", "passed": true, "evidence": "Lists all 13 pipeline steps with descriptions"},
+    {"text": "Response is actionable with copy-pasteable command", "passed": true, "evidence": "Shows the exact command used"}
+  ],
+  "summary": {"passed": 3, "failed": 1, "total": 4, "pass_rate": 0.75}
+}

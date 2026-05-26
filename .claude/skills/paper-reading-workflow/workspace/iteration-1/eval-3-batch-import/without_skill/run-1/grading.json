@@ -1,0 +1,9 @@
+{
+  "expectations": [
+    {"text": "Mentions 'paper-tool batch <file>' command", "passed": true, "evidence": "Shows 'uv run paper-tool batch --continue-on-error <your_markdown.md>'"},
+    {"text": "Recommends --continue-on-error flag", "passed": true, "evidence": "Explicitly mentions --continue-on-error vs --stop-on-error default"},
+    {"text": "Explains how to handle failed papers (re-run with --debug)", "passed": true, "evidence": "Mentions re-running with 'uv run paper-tool add <url>' and --debug flag"},
+    {"text": "Explains auto-extraction from markdown files", "passed": true, "evidence": "States batch supports txt/csv/md formats and auto-extracts URLs"}
+  ],
+  "summary": {"passed": 4, "failed": 0, "total": 4, "pass_rate": 1.0}
+}
