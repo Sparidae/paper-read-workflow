@@ -1,0 +1,12 @@
+{
+  "eval_id": 2,
+  "eval_name": "latex-table-debugging",
+  "prompt": "论文的图表渲染失败了，table显示的是matplotlib降级版本，很难看。怎么调试？",
+  "assertions": [
+    "Points to papers/<paper_dir>/debug/ for diagnostic artifacts",
+    "Mentions debug-table.sh script for isolation",
+    "References latex-failure-patterns.md or common failure patterns",
+    "Explains re-import after fixing (--force --rerender-tables)",
+    "Mentions regression verification on previously-working papers"
+  ]
+}

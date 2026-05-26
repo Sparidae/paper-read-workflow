@@ -1,0 +1,11 @@
+{
+  "eval_id": 3,
+  "eval_name": "batch-import-with-failures",
+  "prompt": "我有一个markdown文件里面有20篇论文链接，想全部导入Notion。但有些可能会失败，我不想半路停下来。",
+  "assertions": [
+    "Mentions 'paper-tool batch <file>' command",
+    "Recommends --continue-on-error flag",
+    "Explains how to handle failed papers (re-run with --debug)",
+    "Explains that the tool auto-extracts URLs from markdown files"
+  ]
+}
