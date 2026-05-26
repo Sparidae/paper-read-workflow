@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -12,6 +13,9 @@ import httpx
 from paper_tool.downloaders.base import BaseDownloader
 from paper_tool.models import PaperMetadata, PaperSource
 from paper_tool.retry import retry as _retry
+
+if TYPE_CHECKING:
+    from paper_tool.config import PipelineContext
 
 
 def _extract_forum_id(url: str) -> str:
@@ -30,16 +34,30 @@ def _extract_forum_id(url: str) -> str:
 class OpenReviewDownloader(BaseDownloader):
     """Downloads papers from openreview.net using the openreview-py package."""
 
+    def __init__(
+        self,
+        *,
+        username: str = "",
+        password: str = "",
+    ) -> None:
+        super().__init__()
+        self._username = username
+        self._password = password
+
+    @classmethod
+    def from_context(cls, ctx: "PipelineContext") -> "OpenReviewDownloader":
+        return cls(
+            username=ctx.openreview_username,
+            password=ctx.openreview_password,
+        )
+
     def _get_client(self) -> "openreview.api.OpenReviewClient":
         import openreview
 
-        from paper_tool.config import get_config
-
-        cfg = get_config()
         kwargs: dict = {"baseurl": "https://api2.openreview.net"}
-        if cfg.openreview_username and cfg.openreview_password:
-            kwargs["username"] = cfg.openreview_username
-            kwargs["password"] = cfg.openreview_password
+        if self._username and self._password:
+            kwargs["username"] = self._username
+            kwargs["password"] = self._password
         return openreview.api.OpenReviewClient(**kwargs)
 
     @_retry(max_attempts=3, base_delay=2.0)

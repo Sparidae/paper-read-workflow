@@ -257,17 +257,17 @@ def _run_citation_refresh() -> bool:
 
 
 def _ensure_notion_database_ready() -> None:
-    from paper_tool.config import get_config
+    from paper_tool.config import PipelineContext
     from paper_tool.notion_setup import check_database
 
     result = check_database()
     if result.ok:
         return
 
-    cfg = get_config()
+    ctx = PipelineContext.from_config()
     error_console.print(f"[ERROR] Notion 自检失败: {result.reason}")
 
-    if not cfg.notion_parent_page_id:
+    if not ctx.notion_parent_page_id:
         console.print(
             "[yellow]未配置 `NOTION_PARENT_PAGE_ID`。"
             "首次建库前请先在 `.env` 中填写它。[/yellow]"
@@ -598,14 +598,14 @@ def chat(
     from rich.markdown import Markdown
     from rich.rule import Rule
 
-    from paper_tool.config import get_config
+    from paper_tool.config import PipelineContext
     from paper_tool.llm_chat import ChatSession, find_paper_file
 
-    cfg = get_config()
+    ctx = PipelineContext.from_config()
 
     # ── 找到论文文件 ──────────────────────────────────────────────────────
     try:
-        file_path = find_paper_file(paper, cfg.papers_dir)
+        file_path = find_paper_file(paper, ctx.papers_dir)
     except FileNotFoundError as e:
         error_console.print(f"[ERROR] {e}")
         raise typer.Exit(code=1)
@@ -618,10 +618,12 @@ def chat(
         else file_path.name
     )
     console.print(f"\n[bold cyan]论文[/bold cyan]: {display_name}")
-    console.print(f"[dim]模型: {cfg.llm_model}  |  加载论文文本中...[/dim]")
+    console.print(f"[dim]模型: {ctx.llm_model}  |  加载论文文本中...[/dim]")
 
     try:
-        session = ChatSession(file_path, title=file_path.stem.replace("_", " "))
+        session = ChatSession.from_context(
+            file_path, title=file_path.stem.replace("_", " "), ctx=ctx
+        )
     except Exception as e:
         error_console.print(f"[ERROR] 加载论文失败: {e}")
         raise typer.Exit(code=1)

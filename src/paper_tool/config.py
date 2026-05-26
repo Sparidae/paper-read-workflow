@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -334,6 +335,108 @@ class Config:
         )
 
         console.print(table)
+
+
+@dataclass
+class PipelineContext:
+    """All config values bundled for injection into business classes.
+
+    Each business class (LLMAnalyzer, NotionService, etc.) reads a subset
+    of these fields. Agents can construct this directly; the CLI uses
+    from_config() for backward compatibility.
+    """
+
+    # ── Notion ──────────────────────────────────────────────────────────
+    notion_token: str
+    notion_database_id: str
+    notion_parent_page_id: str = ""
+    notion_properties: dict[str, str] = field(default_factory=dict)
+    notion_paper_type_prop: str = ""
+    notion_institution_prop: str = ""
+    notion_status_type: str = "checkbox"
+    notion_default_status: str = "Unread"
+    notion_database_title: str = "paper-tool Papers"
+
+    # ── LLM core ────────────────────────────────────────────────────────
+    llm_model: str = "gpt-4o"
+    llm_vision_model: str = ""
+    llm_note_format: str = "json"
+    llm_temperature: float = 0.2
+
+    # ── LLM token budgets ───────────────────────────────────────────────
+    llm_max_input_tokens: int = 100000
+    llm_max_output_tokens: int = 4000
+    llm_classifier_max_tokens: int = 8000
+    llm_translator_max_tokens: int = 8000
+    llm_summarizer_max_tokens: int = 500
+
+    # ── LLM streaming ───────────────────────────────────────────────────
+    llm_stream_window: bool = False
+    llm_stream_window_height: int = 8
+
+    # ── Prompts ─────────────────────────────────────────────────────────
+    analyzer_prompt: str | None = None
+    classifier_prompt: str | None = None
+    summarizer_prompt: str | None = None
+
+    # ── Figure / Table ──────────────────────────────────────────────────
+    max_figures: int = 15
+    rerender_figures: bool = False
+    max_tables: int = 10
+    rerender_tables: bool = False
+
+    # ── OpenAI-compatible endpoints ─────────────────────────────────────
+    openai_base_url: str | None = None
+    openai_vision_api_key: str | None = None
+    openai_vision_base_url: str | None = None
+
+    # ── OpenReview ──────────────────────────────────────────────────────
+    openreview_username: str = ""
+    openreview_password: str = ""
+
+    # ── Storage ─────────────────────────────────────────────────────────
+    papers_dir: Path = field(default_factory=Path)
+
+    @classmethod
+    def from_config(cls, cfg: Config | None = None) -> "PipelineContext":
+        """Build from a Config object (defaults to the global singleton)."""
+        if cfg is None:
+            cfg = get_config()
+        return cls(
+            notion_token=cfg.notion_token,
+            notion_database_id=cfg.notion_database_id,
+            notion_parent_page_id=cfg.notion_parent_page_id,
+            notion_properties=cfg.notion_properties,
+            notion_paper_type_prop=cfg.notion_paper_type_prop,
+            notion_institution_prop=cfg.notion_institution_prop,
+            notion_status_type=cfg.notion_status_type,
+            notion_default_status=cfg.notion_default_status,
+            notion_database_title=cfg.notion_database_title,
+            llm_model=cfg.llm_model,
+            llm_vision_model=cfg.llm_vision_model,
+            llm_note_format=cfg.llm_note_format,
+            llm_temperature=cfg.llm_temperature,
+            llm_max_input_tokens=cfg.llm_max_input_tokens,
+            llm_max_output_tokens=cfg.llm_max_output_tokens,
+            llm_classifier_max_tokens=cfg.llm_classifier_max_tokens,
+            llm_translator_max_tokens=cfg.llm_translator_max_tokens,
+            llm_summarizer_max_tokens=cfg.llm_summarizer_max_tokens,
+            llm_stream_window=cfg.llm_stream_window,
+            llm_stream_window_height=cfg.llm_stream_window_height,
+            analyzer_prompt=cfg.analyzer_prompt,
+            classifier_prompt=cfg.classifier_prompt,
+            summarizer_prompt=cfg.summarizer_prompt,
+            max_figures=cfg.max_figures,
+            rerender_figures=cfg.rerender_figures,
+            max_tables=cfg.max_tables,
+            rerender_tables=cfg.rerender_tables,
+            openai_base_url=cfg.openai_base_url,
+            openai_vision_api_key=cfg.openai_vision_api_key,
+            openai_vision_base_url=cfg.openai_vision_base_url,
+            openreview_username=cfg.openreview_username,
+            openreview_password=cfg.openreview_password,
+            papers_dir=cfg.papers_dir,
+        )
 
 
 # Singleton

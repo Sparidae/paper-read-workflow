@@ -11,7 +11,7 @@ from typing import Callable
 import httpx
 
 from paper_tool.citations import extract_arxiv_id, query_semantic_scholar_batch
-from paper_tool.config import PROJECT_ROOT
+from paper_tool.config import PROJECT_ROOT, PipelineContext
 from paper_tool.notion_service import NotionService
 
 
@@ -62,8 +62,12 @@ def _write_refresh_log(
         f.write("\n")
 
 
-def refresh_all_citations() -> CitationRefreshStats:
-    notion = NotionService()
+def refresh_all_citations(
+    ctx: PipelineContext | None = None,
+) -> CitationRefreshStats:
+    if ctx is None:
+        ctx = PipelineContext.from_config()
+    notion = NotionService.from_context(ctx)
     pages = notion.list_database_pages()
 
     stats = CitationRefreshStats(total_pages=len(pages))

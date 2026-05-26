@@ -7,154 +7,172 @@ description: Use when the user wants to add papers to Notion, process arxiv/Open
 
 ## Overview
 
-Automated end-to-end pipeline: paper URL → PDF/LaTeX download → text extraction → figure/table rendering → LLM analysis → Notion reading notes. Built on the `paper-tool` CLI, this skill guides usage, debugging, and script composition.
+This is an agent-oriented toolkit for processing academic papers. Every pipeline step is a Python function you can import and call directly — no CLI subprocess needed. The `PipelineContext` dataclass bundles all configuration; construct it once and pass it to whichever steps you need.
 
-**Core principle:** The CLI handles the happy path. This skill handles everything else — debugging LaTeX failures, composing reusable scripts, and knowing where things live.
+**Core principle:** You have full control. Mix and match steps, skip the ones you don't need, inject your own logic between them.
 
-## When to Use
+## Setup
 
-- Adding single or batch papers to a Notion reading database
-- LaTeX figure/table rendering fails (blank images, missing macros, fallback artifacts)
-- Setting up the pipeline on a new machine
-- Refreshing citation counts across the Notion database
-- Interactive Q&A with a paper that's already been downloaded
-- Re-importing a paper after fixing parser bugs
+Always start by loading configuration:
 
-Skip this skill for: reading PDFs directly, general LaTeX questions, Notion API usage outside paper processing.
+```python
+from paper_tool.config import PipelineContext
 
-## Prerequisites
-
-The CLI tool must be installed and configured before any workflow runs:
-
-```bash
-cd <project_root>
-uv sync
+ctx = PipelineContext.from_config()
 ```
 
-**Secrets check** — run `uv run paper-tool config show` and verify:
-- `NOTION_TOKEN`, `NOTION_DATABASE_ID` are set
-- `OPENAI_MODEL`, `OPENAI_API_KEY` are set
-- `OPENAI_BASE_URL` points to the correct endpoint
+This reads `config.yaml` and `.env` with the same search logic as the CLI. Every business class also has a `from_context(ctx)` factory, or you can pass parameters explicitly:
 
-**Database check** — ensure the Notion database has the expected schema:
-```bash
-uv run paper-tool config check-db
+```python
+from paper_tool.llm_analyzer import LLMAnalyzer
+
+# Option A: from config
+analyzer = LLMAnalyzer.from_context(ctx)
+
+# Option B: explicit (agent-controlled)
+analyzer = LLMAnalyzer(
+    model="gpt-4o",
+    max_input_tokens=100000,
+    max_output_tokens=4000,
+    temperature=0.2,
+)
 ```
 
-If the database doesn't exist yet, create it:
-```bash
-uv run python scripts/create_notion_db.py --parent-page-id <32-char-hex-id>
+## Core Workflow: Adding a Single Paper
+
+The full pipeline is available as `run_pipeline()` for one-shot use, but agents should compose steps directly for more control:
+
+```python
+from paper_tool.config import PipelineContext
+from paper_tool.pipeline import download_paper, extract_paper_text
+from paper_tool.llm_classifier import LLMClassifier
+from paper_tool.llm_summarizer import LLMSummarizer
+from paper_tool.llm_analyzer import LLMAnalyzer, translate_captions
+from paper_tool.notion_service import NotionService
+
+ctx = PipelineContext.from_config()
+
+# Step 1: Download
+result = download_paper("https://arxiv.org/abs/2301.12345", ctx.papers_dir)
+# result.downloader, result.metadata, result.pdf_path
+
+# Step 2: Extract text + visuals
+ext = extract_paper_text(
+    result.downloader, result.metadata, result.pdf_path, ctx.papers_dir,
+    max_input_tokens=ctx.llm_max_input_tokens,
+    max_figures=ctx.max_figures,
+    max_tables=ctx.max_tables,
+    rerender_figures=ctx.rerender_figures,
+    rerender_tables=ctx.rerender_tables,
+)
+# ext.paper_text, ext.tex_path, ext.figures, ext.tables
+
+# Step 3: Notion
+notion = NotionService.from_context(ctx)
+page_id = notion.create_page(result.metadata)
+
+# Step 4: Classify
+classifier = LLMClassifier.from_context(ctx)
+options = notion.get_classification_options()
+classification = classifier.classify(result.metadata, options)
+notion.update_classifications(page_id, classification)
+
+# Step 5: Summarize
+summarizer = LLMSummarizer.from_context(ctx)
+summary = summarizer.summarize(result.metadata)
+notion.update_summary(page_id, summary)
+
+# Step 6: Translate captions
+if ext.figures:
+    ext.figures = translate_captions(ext.figures, model=ctx.llm_model,
+                                      temperature=ctx.llm_temperature,
+                                      translator_max_tokens=ctx.llm_translator_max_tokens)
+
+# Step 7: Analyze
+analyzer = LLMAnalyzer.from_context(ctx)
+note = analyzer.analyze(result.metadata, ext.paper_text,
+                        figures=ext.figures, tables=ext.tables)
+
+# Step 8: Write to Notion
+notion.append_note_with_figures(page_id, note, ext.figures, ext.tables)
 ```
 
-## Quick Reference
+### Shortcut: run_pipeline()
 
-| Task | Command |
-|------|---------|
-| Add a paper | `uv run paper-tool add <url>` |
-| Add with debug output | `uv run paper-tool add --debug <url>` |
-| Force re-import | `uv run paper-tool add --force <url>` |
-| Skip LLM (download only) | `uv run paper-tool add --skip-llm <url>` |
-| Batch from file | `uv run paper-tool batch <file>` |
-| Chat with a paper | `uv run paper-tool chat <arxiv_id>` |
-| Refresh citations | `uv run paper-tool refresh-citations` |
-| Show config | `uv run paper-tool config show` |
-| Interactive setup | `uv run paper-tool config init` |
-| Start web UI | `uv run paper-tool serve` |
+For simple cases, `run_pipeline()` still works. It internally uses the same step functions:
 
-Key flags: `--debug` prints raw prompts and LLM responses. `--stream` shows token-by-token output. `--force` archives existing Notion page and re-imports.
+```python
+from paper_tool.pipeline import run_pipeline
 
-## Daily Workflows
-
-### Adding a Single Paper
-
-```
-User: "帮我读这篇论文 https://arxiv.org/abs/2301.12345"
+success = run_pipeline("https://arxiv.org/abs/2301.12345")
 ```
 
-1. Run `uv run paper-tool add <url>` and watch the progress
-2. If it succeeds, share the Notion page URL
-3. If LaTeX rendering fails, follow the [LaTeX Debugging](#latex-debugging-workflow) workflow below
+## Batch Import
 
-### Batch Import
+Iterate over URLs and call the steps. Use `--continue-on-error` semantics by catching exceptions per paper:
 
-```
-User: "把这个 Markdown 文件里的所有论文链接都导入"
-```
+```python
+from paper_tool.pipeline import download_paper, extract_paper_text
 
-1. Extract URLs from the file if needed, or point the tool at it directly
-2. Run `uv run paper-tool batch <file> --continue-on-error`
-3. `--continue-on-error` keeps going past failures — useful for large batches
-4. Re-run individual failures with `--debug` to diagnose
-
-### Chat with a Paper
-
-```
-User: "我想和 ResNet 那篇论文聊一下"
+urls = ["https://arxiv.org/abs/2301.12345", "https://arxiv.org/abs/2301.12346"]
+for url in urls:
+    try:
+        result = download_paper(url, ctx.papers_dir)
+        # ... process each paper
+    except Exception as e:
+        print(f"Failed: {url} — {e}")
+        continue
 ```
 
-1. Find the paper: `uv run paper-tool chat <identifier>` where identifier can be an arxiv ID or a partial directory name
-2. The chat session loads the full paper text as context
-3. Use `/reset` to clear conversation history, `/exit` to quit
+## Chat with a Paper
 
-### Refresh Citations
+```python
+from paper_tool.llm_chat import ChatSession, find_paper_file
 
+file_path = find_paper_file("2301.12345", ctx.papers_dir)
+session = ChatSession.from_context(file_path, ctx=ctx)
+answer = session.ask("这篇论文的主要贡献是什么？")
 ```
-User: "帮我更新一下所有论文的引用数"
-```
-
-Run `uv run paper-tool refresh-citations`. This queries Semantic Scholar in batches, respects rate limits, and logs to `.refresh-citation.log`.
 
 ## LaTeX Debugging Workflow
 
-This is the most common failure mode. Different papers use different LaTeX packages, custom macros, and non-standard formatting — the parser covers common cases but will fail on edge cases.
+This is the most common failure mode. Different papers use different LaTeX packages, custom macros, and non-standard formatting.
 
 ### Step 1: Identify the Failure Type
 
-Check the terminal output from `paper-tool add`. The tool reports how each figure/table was rendered:
-
-- `latex` — pdflatex compilation succeeded
-- `matplotlib` — fell back to matplotlib table rendering
-- `cached` — reused a previous render
-- Missing figure — rendering failed silently
-
-For detailed logs, check `papers/<paper_dir>/debug/` — it contains `.tex`, `.log`, `.stdout`, `.stderr`, and `.json` status files for each figure and table.
+Check `papers/<paper_dir>/debug/` — each table/figure has:
+- `table_NN.json` / `figure_NN.json` — `renderer` field: `"latex"`, `"matplotlib"`, or `"cached"`
+- `.latex.tex`, `.latex.log`, `.latex.stdout.txt`, `.latex.stderr.txt` — compilation artifacts
 
 ### Step 2: Isolate and Reproduce
 
-Use the debug scripts to extract and compile a single figure or table in isolation:
+Use the debug scripts to compile a single figure or table in isolation:
 
 ```bash
-# Render a specific figure from paper.tex in isolation
-bash .claude/skills/paper-reading-workflow/scripts/debug-figure.sh \
-  papers/<paper_dir>/paper.tex <figure_index> [output_dir]
-
-# Same for tables
 bash .claude/skills/paper-reading-workflow/scripts/debug-table.sh \
-  papers/<paper_dir>/paper.tex <table_index> [output_dir]
+  papers/<paper_dir>/paper.tex <table_index>
 ```
 
-This extracts the figure/table body and preamble macros, writes a standalone `.tex` file, compiles it with pdflatex, and opens the resulting PNG. Much faster than re-running the full pipeline.
+This is much faster than re-running the full pipeline.
 
 ### Step 3: Diagnose and Fix
 
-Common failure patterns — see `reference/latex-failure-patterns.md` for the full catalog. Quick hits:
-
+Common failure patterns — read `reference/latex-failure-patterns.md` for the full catalog:
 - **Missing macro**: `\newcommand` defined in body (not preamble) → inject into preamble
 - **`\resizebox` wrapping table**: pdflatex can't handle it → strip wrapper, retry
 - **Font package not installed**: map to available fonts or install missing package
 - **pgfplotstable with external data**: data file not found → inline the data
-- **TikZ figure touches border**: textwidth detection wrong → increase page height
+- **TikZ figure touches border**: textwidth detection wrong → increase page dimensions
 
 After identifying the fix, modify the relevant parser in `src/paper_tool/` (`figure_extractor.py` or `table_extractor.py`).
 
 ### Step 4: Verify the Fix
 
-First, verify the target paper works:
 ```bash
-uv run paper-tool add <paper_url> --force --rerender-figures --rerender-tables
+uv run paper-tool add <paper_url> --force --rerender-tables
 ```
 
-Then, verify previously-working papers don't regress. See `reference/latex-failure-patterns.md` for the regression checklist. The project CLAUDE.md has a standing rule: any table/figure parser change must be backward-compatible.
+Check `papers/<paper_dir>/debug/table_NN.json` — the `renderer` field should now be `"latex"`. Then verify previously-working papers don't regress. See `reference/latex-failure-patterns.md` for the regression checklist.
 
 ## Scripts
 
@@ -172,43 +190,67 @@ Then, verify previously-working papers don't regress. See `reference/latex-failu
 
 | Item | Location |
 |------|----------|
-| Project root | Determined at runtime; usually where `config.yaml` lives |
-| Runtime config | `config.yaml` (searches upward from cwd, falls back to project root) |
-| Secrets | `.env` (same search strategy as config.yaml) |
+| Runtime config | `config.yaml` (searches upward from cwd) |
+| Secrets | `.env` (same search strategy) |
 | Paper storage | `papers/` (configurable via `storage.papers_dir`) |
 | Prompt templates | `prompts/analyzer.md`, `classifier.md`, `summarizer.md` |
-| Notion schema | `notion_schema.yaml` |
 | Debug artifacts | `papers/<paper_dir>/debug/` |
-| Logs | `logs/paper_tool.log` (rotating, 10 MB × 5 backups, 30-day retention) |
 
-### Config Toggles
+### PipelineContext Fields
 
-Read `reference/paths.md` for the complete config reference. Key operational toggles:
+When constructing LLM objects or calling step functions, reference these from `PipelineContext`:
 
-- `llm.note_format: "freeform"` — raw Markdown output (current default), `"json"` for structured
-- `llm.max_figures: 15` / `llm.max_tables: 10` — cap images per paper
-- `llm.rerender_figures: true` / `llm.rerender_tables: true` — force re-render (turn off for speed)
-- `notion.status_type: "checkbox"` — how the Status property is stored
+| Field | Type | Usage |
+|-------|------|-------|
+| `llm_model` | `str` | Model name for text LLM calls |
+| `llm_vision_model` | `str` | Model name for vision LLM calls |
+| `llm_temperature` | `float` | Temperature for all LLM calls |
+| `llm_max_input_tokens` | `int` | Truncation budget for paper text |
+| `llm_max_output_tokens` | `int` | Max tokens for note generation |
+| `llm_classifier_max_tokens` | `int` | Max tokens for classifier |
+| `llm_translator_max_tokens` | `int` | Max tokens for caption translation |
+| `llm_summarizer_max_tokens` | `int` | Max tokens for one-sentence summary |
+| `analyzer_prompt` | `str \| None` | Custom analyzer system prompt |
+| `classifier_prompt` | `str \| None` | Custom classifier system prompt |
+| `summarizer_prompt` | `str \| None` | Custom summarizer system prompt |
+| `max_figures` | `int` | Max figures per paper |
+| `max_tables` | `int` | Max tables per paper |
+| `rerender_figures` | `bool` | Force figure re-render |
+| `rerender_tables` | `bool` | Force table re-render |
+| `papers_dir` | `Path` | Root directory for paper storage |
+| `notion_token` | `str` | Notion integration token |
+| `notion_database_id` | `str` | Target Notion database ID |
+| `notion_properties` | `dict` | Property name mapping |
+| `notion_status_type` | `str` | `"checkbox"` or `"select"` |
+| `openai_vision_api_key` | `str \| None` | Vision API key (falls back to text key) |
+| `openai_vision_base_url` | `str \| None` | Vision API base URL |
+
+See `reference/paths.md` for the complete config reference and `reference/notion-properties.md` for the Notion database schema.
 
 ## Project Structure
 
-When investigating parser bugs, you'll work in these source files:
+When investigating parser bugs, work in these source files:
 
 ```
 src/paper_tool/
+├── config.py             # Config, PipelineContext, get_config()
+├── pipeline.py           # run_pipeline(), download_paper(), extract_paper_text()
 ├── figure_extractor.py   # Figure parsing + pdflatex rendering
 ├── table_extractor.py    # Table parsing + pdflatex/matplotlib rendering
 ├── pdf_parser.py         # PDF + LaTeX text extraction
-├── downloaders/arxiv.py  # Arxiv metadata, PDF, LaTeX source download
-├── pipeline.py           # Orchestration (event-driven)
+├── downloaders/          # Arxiv, OpenReview metadata + PDF download
 ├── notion_service.py     # Notion API (pages, blocks, uploads)
-└── llm_*.py              # LLM analyzer, classifier, summarizer, chat, stream
+├── llm_analyzer.py       # Full reading notes + translate_captions()
+├── llm_classifier.py     # Paper classification
+├── llm_summarizer.py     # One-sentence summary
+├── llm_chat.py           # Multi-turn paper Q&A
+└── llm_stream.py         # completion_to_text() — low-level LLM call
 ```
 
 ## Common Pitfalls
 
 - **Config not found**: `config.yaml` searches upward from cwd. Run commands from within the project or a subdirectory.
-- **Notion 404**: The database ID in `.env` may be wrong. Run `paper-tool config check-db` to verify.
+- **Notion 404**: The database ID in `.env` may be wrong. Run `uv run paper-tool config check-db` to verify.
 - **Thinking model token exhaustion**: Models like kimi-k2.5 consume many tokens in CoT. Increase `classifier_max_tokens` and `translator_max_tokens` in `config.yaml`.
 - **`\include` not resolved**: `_expand_tex_includes` may miss non-standard paths. Check the merged `paper.tex`.
-- **Figure rendered as blank PNG**: The image file in `figures/` may be PDF-format. The tool auto-converts PDF to PNG, but check `convert_pdf_figures()` didn't fail.
+- **Figure rendered as blank PNG**: The image file in `figures/` may be PDF-format. The tool auto-converts PDF to PNG, but check `convert_pdf_figures()`.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -150,22 +151,40 @@ _text_client: Any = None
 _vision_client: Any = None
 
 
-def _get_client(use_vision: bool = False) -> Any:
-    """Lazily create and cache OpenAI clients."""
-    from openai import OpenAI
+def _get_client(
+    use_vision: bool = False,
+    vision_api_key: str | None = None,
+    vision_base_url: str | None = None,
+) -> Any:
+    """Lazily create and cache OpenAI clients.
 
-    from paper_tool.config import get_config
+    Caching is per-(api_key, base_url) so different credentials get different clients.
+    """
+    from openai import OpenAI
 
     global _text_client, _vision_client
     if use_vision:
-        if _vision_client is None:
-            cfg = get_config()
+        if vision_api_key is None:
+            vision_api_key = os.getenv("OPENAI_VISION_API_KEY") or os.getenv(
+                "OPENAI_API_KEY"
+            )
+        if vision_base_url is None:
+            vision_base_url = os.getenv("OPENAI_VISION_BASE_URL") or os.getenv(
+                "OPENAI_BASE_URL"
+            )
+        cache_key = (vision_api_key, vision_base_url)
+        if (
+            _vision_client is None
+            or getattr(_vision_client, "_cache_key", None) != cache_key
+        ):
             kwargs: dict[str, Any] = {}
-            if cfg.openai_vision_api_key:
-                kwargs["api_key"] = cfg.openai_vision_api_key
-            if cfg.openai_vision_base_url:
-                kwargs["base_url"] = cfg.openai_vision_base_url
-            _vision_client = OpenAI(**kwargs)
+            if vision_api_key:
+                kwargs["api_key"] = vision_api_key
+            if vision_base_url:
+                kwargs["base_url"] = vision_base_url
+            client = OpenAI(**kwargs)
+            client._cache_key = cache_key  # type: ignore[attr-defined]
+            _vision_client = client
         return _vision_client
 
     if _text_client is None:
@@ -181,6 +200,8 @@ def completion_to_text(
     stream_height: int = 8,
     on_token: Callable[[str], None] | None = None,
     use_vision: bool = False,
+    vision_api_key: str | None = None,
+    vision_base_url: str | None = None,
 ) -> CompletionResult:
     """
     Run OpenAI completion and normalize text extraction.
@@ -191,9 +212,11 @@ def completion_to_text(
     - stream=True        → stream from OpenAI into a Rich StreamWindow (CLI)
     - stream=False       → non-streaming OpenAI call
 
-    Set use_vision=True to use the vision endpoint (OPENAI_VISION_* env vars).
+    Set use_vision=True to use the vision endpoint.
+    Pass vision_api_key / vision_base_url explicitly, or they default
+    to the OPENAI_VISION_* env vars.
     """
-    _client = _get_client(use_vision)
+    _client = _get_client(use_vision, vision_api_key, vision_base_url)
 
     # ── Mode 1: callback-based streaming (no terminal UI) ─────────────────────
     if on_token is not None:

@@ -19,9 +19,139 @@ Event schema
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable
+
+from paper_tool.models import FigureInfo, PaperMetadata
 
 log = logging.getLogger(__name__)
+
+
+# ── Standalone step results ──────────────────────────────────────────────────
+
+
+@dataclass
+class DownloadResult:
+    """Result of downloading a paper."""
+
+    downloader: Any  # BaseDownloader
+    metadata: PaperMetadata
+    pdf_path: Path
+
+
+@dataclass
+class ExtractResult:
+    """Result of extracting text and visuals from a paper."""
+
+    paper_text: str
+    tex_path: Path | None = None
+    figures: list[FigureInfo] = field(default_factory=list)
+    tables: list[FigureInfo] = field(default_factory=list)
+
+
+# ── Standalone step functions (agent-callable) ───────────────────────────────
+
+
+def download_paper(url: str, papers_dir: Path) -> DownloadResult:
+    """Download metadata and PDF for a paper URL.
+
+    Agent usage:
+        from paper_tool.config import PipelineContext
+        from paper_tool.pipeline import download_paper
+        ctx = PipelineContext.from_config()
+        result = download_paper("https://arxiv.org/abs/2301.12345", ctx.papers_dir)
+    """
+    from paper_tool.downloaders import get_downloader
+
+    url = url.strip()
+    downloader = get_downloader(url)
+    metadata = downloader.fetch_metadata(url)
+    pdf_path = downloader.download_pdf(metadata, papers_dir)
+    metadata.pdf_path = str(pdf_path)
+    return DownloadResult(downloader=downloader, metadata=metadata, pdf_path=pdf_path)
+
+
+def extract_paper_text(
+    downloader: Any,
+    metadata: PaperMetadata,
+    pdf_path: Path,
+    papers_dir: Path,
+    *,
+    max_input_tokens: int = 100000,
+    max_figures: int = 15,
+    rerender_figures: bool = False,
+    max_tables: int = 10,
+    rerender_tables: bool = False,
+) -> ExtractResult:
+    """Extract text, figures, and tables from a downloaded paper.
+
+    Agent usage:
+        from paper_tool.pipeline import extract_paper_text
+        result = extract_paper_text(
+            download_result.downloader, download_result.metadata,
+            download_result.pdf_path, ctx.papers_dir,
+            max_input_tokens=ctx.llm_max_input_tokens,
+            max_figures=ctx.max_figures,
+            max_tables=ctx.max_tables,
+        )
+    """
+    from paper_tool.downloaders.arxiv import ArxivDownloader
+    from paper_tool.pdf_parser import extract_text, extract_text_from_latex
+
+    char_budget = max_input_tokens * 4
+    paper_text: str | None = None
+    tex_path: Path | None = None
+
+    if isinstance(downloader, ArxivDownloader):
+        try:
+            tex_path = downloader.download_latex_source(metadata, papers_dir)
+            if tex_path:
+                paper_text = extract_text_from_latex(tex_path, max_chars=char_budget)
+        except Exception:
+            pass
+
+    if paper_text is None:
+        paper_text = extract_text(pdf_path, max_chars=char_budget)
+
+    figures: list[FigureInfo] = []
+    tables: list[FigureInfo] = []
+
+    if isinstance(downloader, ArxivDownloader) and tex_path is not None:
+        from paper_tool.figure_extractor import convert_pdf_figures, parse_figures
+        from paper_tool.table_extractor import parse_tables
+
+        try:
+            figures_dir = downloader.get_figures_dir(metadata, papers_dir)
+            convert_pdf_figures(figures_dir)
+            figures = parse_figures(
+                tex_path,
+                figures_dir,
+                max_figures=max_figures,
+                force_rerender=rerender_figures,
+            )
+        except Exception:
+            pass
+
+        try:
+            tables_dir = (
+                downloader.get_figures_dir(metadata, papers_dir).parent / "tables"
+            )
+            tables = parse_tables(
+                tex_path,
+                tables_dir,
+                max_tables=max_tables,
+                force_rerender=rerender_tables,
+            )
+        except Exception:
+            pass
+
+    return ExtractResult(
+        paper_text=paper_text,
+        tex_path=tex_path,
+        figures=figures,
+        tables=tables,
+    )
 
 
 def run_pipeline(
@@ -55,13 +185,11 @@ def run_pipeline(
 
     Returns True on success, False on any hard failure.
     """
-    from paper_tool.config import get_config
-    from paper_tool.downloaders import get_downloader
+    from paper_tool.config import PipelineContext
     from paper_tool.llm_analyzer import LLMAnalyzer, translate_captions
     from paper_tool.llm_classifier import LLMClassifier
     from paper_tool.llm_summarizer import LLMSummarizer
     from paper_tool.notion_service import NotionService
-    from paper_tool.pdf_parser import extract_text
 
     _raw_emit = on_event or (lambda _: None)
     confirm = on_confirm_force or (lambda _msg: True)
@@ -84,23 +212,25 @@ def run_pipeline(
         emit({"type": "llm_token", "text": text})
 
     url = url.strip()
-    cfg = get_config()
+    ctx = PipelineContext.from_config()
     log.info(
         "run_pipeline start  url=%s  skip_llm=%s  debug=%s  force=%s  model=%s",
         url,
         skip_llm,
         debug,
         force,
-        cfg.llm_model,
+        ctx.llm_model,
     )
 
-    # ── Step 1: Fetch metadata ─────────────────────────────────────────────
+    # ── Step 1-3: Download ─────────────────────────────────────────────────
     emit(
         {"type": "stage_start", "stage": "fetch_metadata", "label": "获取论文元数据..."}
     )
     try:
-        downloader = get_downloader(url)
-        metadata = downloader.fetch_metadata(url)
+        dl_result = download_paper(url, ctx.papers_dir)
+        downloader = dl_result.downloader
+        metadata = dl_result.metadata
+        pdf_path = dl_result.pdf_path
         emit(
             {
                 "type": "stage_done",
@@ -123,7 +253,7 @@ def run_pipeline(
         }
     )
     try:
-        notion = NotionService()
+        notion = NotionService.from_context(ctx)
         existing_ids = notion.find_existing_pages(metadata.url)
         if existing_ids:
             if not force:
@@ -179,33 +309,11 @@ def run_pipeline(
         emit({"type": "error", "message": f"Notion 重复检查失败: {e}"})
         return False
 
-    # ── Step 3: Download PDF ───────────────────────────────────────────────
-    emit({"type": "stage_start", "stage": "download_pdf", "label": "下载 PDF..."})
-    try:
-        pdf_path = downloader.download_pdf(metadata, cfg.papers_dir)
-        metadata.pdf_path = str(pdf_path)
-        emit(
-            {
-                "type": "stage_done",
-                "stage": "download_pdf",
-                "label": f"PDF 已保存: {pdf_path.name}",
-                "status": "ok",
-            }
-        )
-    except Exception as e:
-        log.exception("PDF 下载失败: %s", e)
-        emit({"type": "error", "message": f"PDF 下载失败: {e}"})
-        return False
+    # ── Step 4-5: Extract text + visuals ───────────────────────────────────
+    from paper_tool.downloaders.arxiv import ArxivDownloader as _Arxiv
 
-    # ── Step 4: Extract text ───────────────────────────────────────────────
-    from paper_tool.downloaders.arxiv import ArxivDownloader
-    from paper_tool.pdf_parser import extract_text_from_latex
-
-    char_budget = cfg.llm_max_input_tokens * 4
-    paper_text: str | None = None
-    tex_path = None
-
-    if isinstance(downloader, ArxivDownloader):
+    is_arxiv = isinstance(downloader, _Arxiv)
+    if is_arxiv:
         emit(
             {
                 "type": "stage_start",
@@ -213,15 +321,39 @@ def run_pipeline(
                 "label": "下载 LaTeX 源码...",
             }
         )
-        try:
-            tex_path = downloader.download_latex_source(metadata, cfg.papers_dir)
+    else:
+        emit(
+            {
+                "type": "stage_start",
+                "stage": "extract_text",
+                "label": "提取 PDF 文本...",
+            }
+        )
+
+    try:
+        ext = extract_paper_text(
+            downloader,
+            metadata,
+            pdf_path,
+            ctx.papers_dir,
+            max_input_tokens=ctx.llm_max_input_tokens,
+            max_figures=ctx.max_figures,
+            rerender_figures=ctx.rerender_figures,
+            max_tables=ctx.max_tables,
+            rerender_tables=ctx.rerender_tables,
+        )
+        pdf_text = ext.paper_text
+        tex_path = ext.tex_path
+        figures = ext.figures
+        tables = ext.tables
+
+        if is_arxiv:
             if tex_path:
-                paper_text = extract_text_from_latex(tex_path, max_chars=char_budget)
                 emit(
                     {
                         "type": "stage_done",
                         "stage": "download_latex",
-                        "label": f"LaTeX 源码解析完成 {len(paper_text):,} 字符",
+                        "label": f"LaTeX 源码解析完成 {len(pdf_text):,} 字符",
                         "status": "ok",
                     }
                 )
@@ -234,64 +366,6 @@ def run_pipeline(
                         "status": "warn",
                     }
                 )
-        except Exception as e:
-            emit(
-                {
-                    "type": "stage_done",
-                    "stage": "download_latex",
-                    "label": f"LaTeX 解析失败，降级到 PDF: {e}",
-                    "status": "warn",
-                }
-            )
-
-    if paper_text is None:
-        emit(
-            {
-                "type": "stage_start",
-                "stage": "extract_text",
-                "label": "提取 PDF 文本...",
-            }
-        )
-        try:
-            paper_text = extract_text(pdf_path, max_chars=char_budget)
-            emit(
-                {
-                    "type": "stage_done",
-                    "stage": "extract_text",
-                    "label": f"PDF 文本提取完成 {len(paper_text):,} 字符",
-                    "status": "ok",
-                }
-            )
-        except Exception as e:
-            log.exception("PDF 文本提取失败: %s", e)
-            emit({"type": "error", "message": f"PDF 文本提取失败: {e}"})
-            return False
-
-    pdf_text = paper_text
-
-    # ── Step 5: Extract figures and tables (before any LLM work) ──────────
-    figures: list = []
-    tables: list = []
-    if isinstance(downloader, ArxivDownloader) and tex_path is not None:
-        from paper_tool.figure_extractor import convert_pdf_figures, parse_figures
-        from paper_tool.table_extractor import parse_tables
-
-        emit(
-            {
-                "type": "stage_start",
-                "stage": "extract_figures",
-                "label": "提取论文图片...",
-            }
-        )
-        try:
-            figures_dir = downloader.get_figures_dir(metadata, cfg.papers_dir)
-            convert_pdf_figures(figures_dir)
-            figures = parse_figures(
-                tex_path,
-                figures_dir,
-                max_figures=cfg.max_figures,
-                force_rerender=cfg.rerender_figures,
-            )
             if figures:
                 emit(
                     {
@@ -301,43 +375,6 @@ def run_pipeline(
                         "status": "ok",
                     }
                 )
-            else:
-                emit(
-                    {
-                        "type": "stage_done",
-                        "stage": "extract_figures",
-                        "label": "未找到可用图片",
-                        "status": "warn",
-                    }
-                )
-        except Exception as e:
-            emit(
-                {
-                    "type": "stage_done",
-                    "stage": "extract_figures",
-                    "label": f"图片提取失败（已跳过）: {e}",
-                    "status": "warn",
-                }
-            )
-            figures = []
-
-        emit(
-            {
-                "type": "stage_start",
-                "stage": "extract_tables",
-                "label": "提取并渲染论文表格...",
-            }
-        )
-        try:
-            tables_dir = (
-                downloader.get_figures_dir(metadata, cfg.papers_dir).parent / "tables"
-            )
-            tables = parse_tables(
-                tex_path,
-                tables_dir,
-                max_tables=cfg.max_tables,
-                force_rerender=cfg.rerender_tables,
-            )
             if tables:
                 emit(
                     {
@@ -347,27 +384,21 @@ def run_pipeline(
                         "status": "ok",
                     }
                 )
-            else:
-                emit(
-                    {
-                        "type": "stage_done",
-                        "stage": "extract_tables",
-                        "label": "未找到可用表格",
-                        "status": "warn",
-                    }
-                )
-        except Exception as e:
+        else:
             emit(
                 {
                     "type": "stage_done",
-                    "stage": "extract_tables",
-                    "label": f"表格提取失败（已跳过）: {e}",
-                    "status": "warn",
+                    "stage": "extract_text",
+                    "label": f"PDF 文本提取完成 {len(pdf_text):,} 字符",
+                    "status": "ok",
                 }
             )
-            tables = []
+    except Exception as e:
+        log.exception("文本提取失败: %s", e)
+        emit({"type": "error", "message": f"文本提取失败: {e}"})
+        return False
 
-    # ── Render summary + LLM gate (only when visuals were extracted) ──────
+    # ── Render summary + LLM gate ──────────────────────────────────────────
     if not skip_llm and (figures or tables):
         latex_t = sum(1 for t in tables if t.render_backend == "latex")
         mpl_t = sum(1 for t in tables if t.render_backend == "matplotlib")
@@ -419,15 +450,14 @@ def run_pipeline(
         )
         try:
             available_options = notion.get_classification_options()
-            classifier = LLMClassifier()
-            from pathlib import Path as _Path
+            classifier = LLMClassifier.from_context(ctx)
 
             from paper_tool.pdf_parser import extract_first_page_text as _efpt
 
             _first_page = ""
             if metadata.pdf_path:
                 try:
-                    _first_page = _efpt(_Path(metadata.pdf_path))
+                    _first_page = _efpt(Path(metadata.pdf_path))
                 except Exception:
                     pass
             emit({"type": "llm_start", "title": "LLM 分类标注"})
@@ -488,7 +518,7 @@ def run_pipeline(
             }
         )
         try:
-            summarizer = LLMSummarizer()
+            summarizer = LLMSummarizer.from_context(ctx)
             emit({"type": "llm_start", "title": "LLM 一句话摘要"})
             summary = summarizer.summarize(metadata, debug=debug, on_token=_on_token)
             emit({"type": "llm_end"})
@@ -524,6 +554,11 @@ def run_pipeline(
             emit({"type": "llm_start", "title": "LLM 翻译图片说明"})
             figures = translate_captions(
                 figures,
+                model=ctx.llm_model,
+                temperature=ctx.llm_temperature,
+                translator_max_tokens=ctx.llm_translator_max_tokens,
+                stream_window=ctx.llm_stream_window,
+                stream_window_height=ctx.llm_stream_window_height,
                 stream_title="LLM 流式输出 · 图片说明翻译",
                 on_token=_on_token,
             )
@@ -559,6 +594,11 @@ def run_pipeline(
             emit({"type": "llm_start", "title": "LLM 翻译表格说明"})
             tables = translate_captions(
                 tables,
+                model=ctx.llm_model,
+                temperature=ctx.llm_temperature,
+                translator_max_tokens=ctx.llm_translator_max_tokens,
+                stream_window=ctx.llm_stream_window,
+                stream_window_height=ctx.llm_stream_window_height,
                 stream_title="LLM 流式输出 · 表格说明翻译",
                 on_token=_on_token,
             )
@@ -589,12 +629,12 @@ def run_pipeline(
             {
                 "type": "stage_start",
                 "stage": "llm_analyze",
-                "label": f"LLM 生成笔记 ({cfg.llm_model})...",
+                "label": f"LLM 生成笔记 ({ctx.llm_model})...",
             }
         )
         try:
-            analyzer = LLMAnalyzer()
-            emit({"type": "llm_start", "title": f"LLM 生成笔记 ({cfg.llm_model})"})
+            analyzer = LLMAnalyzer.from_context(ctx)
+            emit({"type": "llm_start", "title": f"LLM 生成笔记 ({ctx.llm_model})"})
             note = analyzer.analyze(
                 metadata,
                 pdf_text,

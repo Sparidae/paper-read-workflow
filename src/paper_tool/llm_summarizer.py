@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 import traceback
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
-from paper_tool.config import get_config
+if TYPE_CHECKING:
+    from paper_tool.config import PipelineContext
+
 from paper_tool.llm_stream import completion_to_text
 from paper_tool.models import PaperMetadata
 from paper_tool.retry import with_retry as _with_retry
@@ -33,8 +35,33 @@ def _build_user_prompt(metadata: PaperMetadata) -> str:
 class LLMSummarizer:
     """Generates a single-sentence Chinese summary from paper title and abstract."""
 
-    def __init__(self) -> None:
-        self._cfg = get_config()
+    def __init__(
+        self,
+        *,
+        model: str = "gpt-4o",
+        summarizer_prompt: str | None = None,
+        summarizer_max_tokens: int = 500,
+        temperature: float = 0.2,
+        stream_window: bool = False,
+        stream_window_height: int = 8,
+    ) -> None:
+        self._model = model
+        self._summarizer_prompt = summarizer_prompt
+        self._summarizer_max_tokens = summarizer_max_tokens
+        self._temperature = temperature
+        self._stream_window = stream_window
+        self._stream_window_height = stream_window_height
+
+    @classmethod
+    def from_context(cls, ctx: "PipelineContext") -> "LLMSummarizer":
+        return cls(
+            model=ctx.llm_model,
+            summarizer_prompt=ctx.summarizer_prompt,
+            summarizer_max_tokens=ctx.llm_summarizer_max_tokens,
+            temperature=ctx.llm_temperature,
+            stream_window=ctx.llm_stream_window,
+            stream_window_height=ctx.llm_stream_window_height,
+        )
 
     def summarize(
         self,
@@ -58,29 +85,29 @@ class LLMSummarizer:
             print(sep, flush=True)
             print(content or "(empty)", flush=True)
 
-        system_prompt = self._cfg.summarizer_prompt or _DEFAULT_SYSTEM_PROMPT
+        system_prompt = self._summarizer_prompt or _DEFAULT_SYSTEM_PROMPT
         user_prompt = _build_user_prompt(metadata)
 
         _dbg("System Prompt", system_prompt)
         _dbg("User Prompt", user_prompt)
 
         kwargs: dict = {
-            "model": self._cfg.llm_model,
+            "model": self._model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "max_tokens": self._cfg.llm_summarizer_max_tokens,
-            "temperature": self._cfg.llm_temperature,
+            "max_tokens": self._summarizer_max_tokens,
+            "temperature": self._temperature,
         }
-        stream_enabled = (stream or self._cfg.llm_stream_window) and on_token is None
+        stream_enabled = (stream or self._stream_window) and on_token is None
         try:
             result = _with_retry(
                 lambda: completion_to_text(
                     request_kwargs=kwargs,
                     stream=stream_enabled,
                     stream_title="LLM 流式输出 · 摘要",
-                    stream_height=self._cfg.llm_stream_window_height,
+                    stream_height=self._stream_window_height,
                     on_token=on_token,
                 ),
                 max_attempts=3,

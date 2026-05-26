@@ -15,7 +15,7 @@ from paper_tool.retry import retry as _retry
 from paper_tool.retry import with_retry as _with_retry
 
 if TYPE_CHECKING:
-    pass
+    from paper_tool.config import PipelineContext
 
 log = logging.getLogger(__name__)
 
@@ -98,27 +98,48 @@ def _llm_call(
     user: str,
     *,
     max_tokens: int | None = None,
+    model: str | None = None,
+    temperature: float | None = None,
+    stream_window: bool | None = None,
+    stream_window_height: int | None = None,
     stream: bool = False,
     stream_title: str = "LLM 流式输出",
     on_token: Callable[[str], None] | None = None,
 ) -> str:
     """Single LLM call, returns raw response text. Raises on empty response."""
-    cfg = get_config()
+    if (
+        model is None
+        or temperature is None
+        or stream_window is None
+        or stream_window_height is None
+    ):
+        cfg = get_config()
+        if model is None:
+            model = cfg.llm_model
+        if temperature is None:
+            temperature = cfg.llm_temperature
+        if stream_window is None:
+            stream_window = cfg.llm_stream_window
+        if stream_window_height is None:
+            stream_window_height = cfg.llm_stream_window_height
+        if max_tokens is None:
+            max_tokens = cfg.llm_translator_max_tokens
+
     kwargs: dict = {
-        "model": cfg.llm_model,
+        "model": model,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        "max_tokens": max_tokens or cfg.llm_translator_max_tokens,
-        "temperature": cfg.llm_temperature,
+        "max_tokens": max_tokens or 8000,
+        "temperature": temperature,
     }
-    stream_enabled = (stream or cfg.llm_stream_window) and on_token is None
+    stream_enabled = (stream or stream_window) and on_token is None
     result = completion_to_text(
         request_kwargs=kwargs,
         stream=stream_enabled,
         stream_title=stream_title,
-        stream_height=cfg.llm_stream_window_height,
+        stream_height=stream_window_height,
         on_token=on_token,
     )
     raw = result.text
@@ -140,6 +161,11 @@ def _strip_json_fence(raw: str) -> str:
 def translate_captions(
     figures: list[FigureInfo],
     *,
+    model: str | None = None,
+    temperature: float | None = None,
+    translator_max_tokens: int | None = None,
+    stream_window: bool | None = None,
+    stream_window_height: int | None = None,
     stream: bool = False,
     stream_title: str = "LLM 流式输出 · 图注翻译",
     on_token: Callable[[str], None] | None = None,
@@ -171,6 +197,11 @@ def translate_captions(
     raw = _llm_call(
         system,
         user,
+        model=model,
+        temperature=temperature,
+        max_tokens=translator_max_tokens,
+        stream_window=stream_window,
+        stream_window_height=stream_window_height,
         stream=stream,
         stream_title=stream_title,
         on_token=on_token,
@@ -210,8 +241,39 @@ _TABLE_PLACEMENT_INSTRUCTION = """
 class LLMAnalyzer:
     """Generates structured reading notes from paper content."""
 
-    def __init__(self) -> None:
-        self._cfg = get_config()
+    def __init__(
+        self,
+        *,
+        model: str = "gpt-4o",
+        analyzer_prompt: str | None = None,
+        note_format: str = "json",
+        max_input_tokens: int = 100000,
+        max_output_tokens: int = 4000,
+        temperature: float = 0.2,
+        stream_window: bool = False,
+        stream_window_height: int = 8,
+    ) -> None:
+        self._model = model
+        self._analyzer_prompt = analyzer_prompt
+        self._note_format = note_format
+        self._max_input_tokens = max_input_tokens
+        self._max_output_tokens = max_output_tokens
+        self._temperature = temperature
+        self._stream_window = stream_window
+        self._stream_window_height = stream_window_height
+
+    @classmethod
+    def from_context(cls, ctx: PipelineContext) -> LLMAnalyzer:
+        return cls(
+            model=ctx.llm_model,
+            analyzer_prompt=ctx.analyzer_prompt,
+            note_format=ctx.llm_note_format,
+            max_input_tokens=ctx.llm_max_input_tokens,
+            max_output_tokens=ctx.llm_max_output_tokens,
+            temperature=ctx.llm_temperature,
+            stream_window=ctx.llm_stream_window,
+            stream_window_height=ctx.llm_stream_window_height,
+        )
 
     def _truncate(self, text: str, token_budget: int) -> str:
         max_chars = token_budget * 4
@@ -251,12 +313,10 @@ class LLMAnalyzer:
             print(content or "(empty)", flush=True)
 
         reserved = 2000
-        truncated = self._truncate(
-            paper_text, self._cfg.llm_max_input_tokens - reserved
-        )
-        system_prompt = self._cfg.analyzer_prompt or _SYSTEM_PROMPT
+        truncated = self._truncate(paper_text, self._max_input_tokens - reserved)
+        system_prompt = self._analyzer_prompt or _SYSTEM_PROMPT
 
-        if self._cfg.llm_note_format == "freeform":
+        if self._note_format == "freeform":
             if figures:
                 figures_list = "\n".join(
                     f"- 图片 {fig.number}：{fig.caption or '（无说明）'}"
@@ -282,15 +342,15 @@ class LLMAnalyzer:
             user_prompt[:1000],
         )
 
-        stream_enabled = (stream or self._cfg.llm_stream_window) and on_token is None
+        stream_enabled = (stream or self._stream_window) and on_token is None
         kwargs: dict = {
-            "model": self._cfg.llm_model,
+            "model": self._model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "max_tokens": self._cfg.llm_max_output_tokens,
-            "temperature": self._cfg.llm_temperature,
+            "max_tokens": self._max_output_tokens,
+            "temperature": self._temperature,
         }
         try:
             response = _with_retry(
@@ -298,7 +358,7 @@ class LLMAnalyzer:
                     request_kwargs=kwargs,
                     stream=stream_enabled,
                     stream_title="LLM 流式输出 · 笔记",
-                    stream_height=self._cfg.llm_stream_window_height,
+                    stream_height=self._stream_window_height,
                     on_token=on_token,
                 ),
                 max_attempts=3,
@@ -334,7 +394,7 @@ class LLMAnalyzer:
             )
             _dbg(f"Raw Response ({len(raw)} chars)", raw)
 
-        if self._cfg.llm_note_format == "freeform":
+        if self._note_format == "freeform":
             if metadata.source == metadata.source.ARXIV:
                 alphaxiv_url = f"https://alphaxiv.org/abs/{metadata.paper_id}"
                 bookmark = f"[🔖 alphaXiv · {metadata.paper_id}]({alphaxiv_url})\n\n"

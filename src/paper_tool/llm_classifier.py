@@ -11,12 +11,14 @@ import json
 import logging
 import re
 import traceback
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
-from paper_tool.config import get_config
 from paper_tool.llm_stream import completion_to_text
 from paper_tool.models import Classification, PaperMetadata
 from paper_tool.retry import with_retry as _with_retry
+
+if TYPE_CHECKING:
+    from paper_tool.config import PipelineContext
 
 log = logging.getLogger(__name__)
 
@@ -151,8 +153,33 @@ class LLMClassifier:
     Completely independent of LLMAnalyzer.
     """
 
-    def __init__(self) -> None:
-        self._cfg = get_config()
+    def __init__(
+        self,
+        *,
+        model: str = "gpt-4o",
+        classifier_prompt: str | None = None,
+        classifier_max_tokens: int = 8000,
+        temperature: float = 0.2,
+        stream_window: bool = False,
+        stream_window_height: int = 8,
+    ) -> None:
+        self._model = model
+        self._classifier_prompt = classifier_prompt
+        self._classifier_max_tokens = classifier_max_tokens
+        self._temperature = temperature
+        self._stream_window = stream_window
+        self._stream_window_height = stream_window_height
+
+    @classmethod
+    def from_context(cls, ctx: PipelineContext) -> LLMClassifier:
+        return cls(
+            model=ctx.llm_model,
+            classifier_prompt=ctx.classifier_prompt,
+            classifier_max_tokens=ctx.llm_classifier_max_tokens,
+            temperature=ctx.llm_temperature,
+            stream_window=ctx.llm_stream_window,
+            stream_window_height=ctx.llm_stream_window_height,
+        )
 
     def classify(
         self,
@@ -181,26 +208,25 @@ class LLMClassifier:
             print(sep, flush=True)
             print(content or "(empty)", flush=True)
 
-        classifier_template = self._cfg.classifier_prompt
-        system_prompt = _build_system_prompt(available_options, classifier_template)
+        system_prompt = _build_system_prompt(available_options, self._classifier_prompt)
         user_prompt = _build_user_prompt(metadata, first_page_text)
 
         _dbg("System Prompt", system_prompt)
         _dbg("User Prompt", user_prompt)
 
         kwargs: dict = {
-            "model": self._cfg.llm_model,
+            "model": self._model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "max_tokens": self._cfg.llm_classifier_max_tokens,
-            "temperature": self._cfg.llm_temperature,
+            "max_tokens": self._classifier_max_tokens,
+            "temperature": self._temperature,
         }
         messages: list[dict] = kwargs.pop("messages")
         max_attempts = 3
         last_exc: Exception = RuntimeError("unreachable")
-        stream_enabled = (stream or self._cfg.llm_stream_window) and on_token is None
+        stream_enabled = (stream or self._stream_window) and on_token is None
 
         for attempt in range(max_attempts):
             if attempt > 0:
@@ -216,7 +242,7 @@ class LLMClassifier:
                         request_kwargs={**kwargs, "messages": messages},
                         stream=stream_enabled,
                         stream_title=f"LLM 流式输出 · 分类 (attempt {attempt + 1})",
-                        stream_height=self._cfg.llm_stream_window_height,
+                        stream_height=self._stream_window_height,
                         on_token=on_token,
                     ),
                     max_attempts=3,

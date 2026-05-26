@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from paper_tool.config import get_config
 from paper_tool.llm_stream import completion_to_text
+
+if TYPE_CHECKING:
+    from paper_tool.config import PipelineContext
 
 log = logging.getLogger(__name__)
 
@@ -98,14 +101,27 @@ class ChatSession:
     accumulate in self.messages.
     """
 
-    def __init__(self, file_path: Path, title: str = "", authors: str = "") -> None:
-        cfg = get_config()
-        self._cfg = cfg
+    def __init__(
+        self,
+        file_path: Path,
+        title: str = "",
+        authors: str = "",
+        *,
+        model: str = "gpt-4o",
+        max_input_tokens: int = 100000,
+        temperature: float = 0.2,
+        stream_window: bool = False,
+        stream_window_height: int = 8,
+    ) -> None:
+        self._model = model
+        self._temperature = temperature
+        self._stream_window = stream_window
+        self._stream_window_height = stream_window_height
         self.file_path = file_path
 
         # Reserve tokens for conversation history; paper gets the rest
         reserved_for_history = 8000
-        paper_char_budget = (cfg.llm_max_input_tokens - reserved_for_history) * 4
+        paper_char_budget = (max_input_tokens - reserved_for_history) * 4
 
         paper_text = load_paper_text(file_path, max_chars=paper_char_budget)
         self.paper_char_count = len(paper_text)
@@ -117,6 +133,26 @@ class ChatSession:
         )
         self.messages: list[dict] = []
 
+    @classmethod
+    def from_context(
+        cls,
+        file_path: Path,
+        title: str = "",
+        authors: str = "",
+        *,
+        ctx: PipelineContext,
+    ) -> "ChatSession":
+        return cls(
+            file_path,
+            title=title,
+            authors=authors,
+            model=ctx.llm_model,
+            max_input_tokens=ctx.llm_max_input_tokens,
+            temperature=ctx.llm_temperature,
+            stream_window=ctx.llm_stream_window,
+            stream_window_height=ctx.llm_stream_window_height,
+        )
+
     def ask(self, question: str, debug: bool = False, stream: bool = False) -> str:
         """Send a question and return the model's response."""
         self.messages.append({"role": "user", "content": question})
@@ -127,10 +163,10 @@ class ChatSession:
         ]
 
         kwargs: dict = {
-            "model": self._cfg.llm_model,
+            "model": self._model,
             "messages": all_messages,
             "max_tokens": 4096,
-            "temperature": self._cfg.llm_temperature,
+            "temperature": self._temperature,
         }
         log.info(
             "Chat ask  messages=%d  question=%s",
@@ -145,9 +181,9 @@ class ChatSession:
 
         result = completion_to_text(
             request_kwargs=kwargs,
-            stream=stream or self._cfg.llm_stream_window,
+            stream=stream or self._stream_window,
             stream_title="LLM 流式输出 · Chat",
-            stream_height=self._cfg.llm_stream_window_height,
+            stream_height=self._stream_window_height,
         )
         answer = result.text
 

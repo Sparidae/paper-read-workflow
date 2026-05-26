@@ -9,12 +9,14 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import httpx
 
-from paper_tool.config import get_config
 from paper_tool.models import Classification, FigureInfo, PaperMetadata, PaperNote
+
+if TYPE_CHECKING:
+    from paper_tool.config import PipelineContext
 
 log = logging.getLogger(__name__)
 
@@ -465,18 +467,39 @@ def _note_to_blocks(note: PaperNote) -> list[dict]:
 class NotionService:
     """Handles all Notion API interactions."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        token: str = "",
+        database_id: str = "",
+        properties: dict[str, str] | None = None,
+        status_type: str = "checkbox",
+        default_status: str = "Unread",
+        paper_type_prop: str = "",
+        institution_prop: str = "",
+    ) -> None:
         from notion_client import Client
 
-        cfg = get_config()
-        self._token = cfg.notion_token
+        self._token = token
         self._client = Client(auth=self._token)
-        self._database_id = cfg.notion_database_id
-        self._props = cfg.notion_properties
-        self._status_type = cfg.notion_status_type
-        self._default_status = cfg.notion_default_status
-        self._paper_type_prop = cfg.notion_paper_type_prop
-        self._institution_prop = cfg.notion_institution_prop
+        self._database_id = database_id
+        self._props = properties or {}
+        self._status_type = status_type
+        self._default_status = default_status
+        self._paper_type_prop = paper_type_prop
+        self._institution_prop = institution_prop
+
+    @classmethod
+    def from_context(cls, ctx: PipelineContext) -> NotionService:
+        return cls(
+            token=ctx.notion_token,
+            database_id=ctx.notion_database_id,
+            properties=ctx.notion_properties,
+            status_type=ctx.notion_status_type,
+            default_status=ctx.notion_default_status,
+            paper_type_prop=ctx.notion_paper_type_prop,
+            institution_prop=ctx.notion_institution_prop,
+        )
 
     def get_property_options(self, prop_name: str) -> list[str]:
         """Fetch existing option names for a select or multi_select property."""
