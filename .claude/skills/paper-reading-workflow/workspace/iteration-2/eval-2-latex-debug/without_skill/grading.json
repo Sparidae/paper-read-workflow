@@ -1,0 +1,29 @@
+{
+  "expectations": [
+    {
+      "text": "Points to papers/<paper_dir>/debug/ for diagnostic artifacts",
+      "passed": true,
+      "evidence": "Lists table_XX.json, table_XX.latex.tex, table_XX.latex.log, table_XX.latex.stderr.txt with detailed descriptions"
+    },
+    {
+      "text": "Mentions debug-table.sh script for isolation",
+      "passed": false,
+      "evidence": "No mention of debug-table.sh anywhere in the response"
+    },
+    {
+      "text": "References latex-failure-patterns.md or common failure patterns",
+      "passed": false,
+      "evidence": "Lists failure patterns (Undefined control sequence, Missing \\begin{document}, Extra alignment tab) but never references latex-failure-patterns.md or the skill's reference docs"
+    },
+    {
+      "text": "Explains re-import after fixing (--force --rerender-tables)",
+      "passed": false,
+      "evidence": "Mentions rerender_tables: true in config.yaml and --skip-llm flag, but doesn't use --force or --rerender-tables CLI flags together for re-import"
+    },
+    {
+      "text": "Mentions regression verification on previously-working papers",
+      "passed": false,
+      "evidence": "No mention of regression testing on previously-working papers"
+    }
+  ]
+}

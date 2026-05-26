@@ -1,0 +1,24 @@
+{
+  "expectations": [
+    {
+      "text": "Mentions iterating over URLs in a loop or batch processing pattern",
+      "passed": true,
+      "evidence": "Shows Python for loop: for url in urls: try...except...continue, collecting successes and failures"
+    },
+    {
+      "text": "Recommends try/except per paper for resilience (equivalent to --continue-on-error)",
+      "passed": true,
+      "evidence": "Shows try/except Exception as e pattern inside the loop, failures.append((url, str(e))), continue"
+    },
+    {
+      "text": "Explains how to re-run or debug individual failures",
+      "passed": true,
+      "evidence": "Collects failures list, prints FAILED: url — err at the end, and mentions the CLI --continue-on-error prints per-paper errors"
+    },
+    {
+      "text": "References the batch workflow from the skill or shows composable step functions",
+      "passed": true,
+      "evidence": "Imports PipelineContext.from_config(), download_paper, extract_paper_text, run_pipeline from paper_tool modules"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "expectations": [
+    {
+      "text": "Mentions iterating over URLs in a loop or batch processing pattern",
+      "passed": false,
+      "evidence": "Only shows the monolithic CLI batch command; no loop or iteration pattern"
+    },
+    {
+      "text": "Recommends try/except per paper for resilience (equivalent to --continue-on-error)",
+      "passed": false,
+      "evidence": "Only mentions --continue-on-error CLI flag; no try/except or programmatic error handling"
+    },
+    {
+      "text": "Explains how to re-run or debug individual failures",
+      "passed": false,
+      "evidence": "Only says '看输出的错误信息单独排查即可' without explaining re-run mechanics or debugging approach"
+    },
+    {
+      "text": "References the batch workflow from the skill or shows composable step functions",
+      "passed": false,
+      "evidence": "No Python imports, no composable functions, no skill references"
+    }
+  ]
+}

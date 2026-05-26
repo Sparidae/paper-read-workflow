@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eval Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #faf9f5;
+      --surface: #ffffff;
+      --border: #e8e6dc;
+      --text: #141413;
+      --text-muted: #b0aea5;
+      --accent: #d97757;
+      --accent-hover: #c4613f;
+      --green: #788c5d;
+      --green-bg: #eef2e8;
+      --red: #c44;
+      --red-bg: #fceaea;
+      --header-bg: #141413;
+      --header-text: #faf9f5;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Lora', Georgia, serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .header .instructions {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      margin-top: 0.25rem;
+    }
+    .header .progress {
+      font-size: 0.875rem;
+      opacity: 0.8;
+      text-align: right;
+    }
+
+    /* ---- Main content ---- */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    /* ---- Sections ---- */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      flex-shrink: 0;
+    }
+    .section-header {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .section-body {
+      padding: 1rem;
+    }
+
+    /* ---- Config badge ---- */
+    .config-badge {
+      display: inline-block;
+      padding: 0.2rem 0.625rem;
+      border-radius: 9999px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-left: 0.75rem;
+      vertical-align: middle;
+    }
+    .config-badge.config-primary {
+      background: rgba(33, 150, 243, 0.12);
+      color: #1976d2;
+    }
+    .config-badge.config-baseline {
+      background: rgba(255, 193, 7, 0.15);
+      color: #f57f17;
+    }
+
+    /* ---- Prompt ---- */
+    .prompt-text {
+      white-space: pre-wrap;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+    }
+
+    /* ---- Outputs ---- */
+    .output-file {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .output-file + .output-file {
+      margin-top: 1rem;
+    }
+    .output-file-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .output-file-header .dl-btn {
+      font-size: 0.7rem;
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 500;
+      opacity: 0.8;
+    }
+    .output-file-header .dl-btn:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+    .output-file-content {
+      padding: 0.75rem;
+      overflow-x: auto;
+    }
+    .output-file-content pre {
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    .output-file-content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .output-file-content iframe {
+      width: 100%;
+      height: 600px;
+      border: none;
+    }
+    .output-file-content table {
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      width: 100%;
+    }
+    .output-file-content table td,
+    .output-file-content table th {
+      border: 1px solid var(--border);
+      padding: 0.375rem 0.5rem;
+      text-align: left;
+    }
+    .output-file-content table th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+    .output-file-content .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .output-file-content .download-link:hover {
+      background: var(--border);
+    }
+    .empty-state {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    /* ---- Feedback ---- */
+    .prev-feedback {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.625rem 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .prev-feedback-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.25rem;
+      color: var(--text-muted);
+    }
+    .feedback-textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      resize: vertical;
+      color: var(--text);
+    }
+    .feedback-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .feedback-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      min-height: 1.1em;
+    }
+
+    /* ---- Grades (collapsible) ---- */
+    .grades-toggle {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .grades-toggle:hover {
+      color: var(--accent);
+    }
+    .grades-toggle .arrow {
+      margin-right: 0.5rem;
+      transition: transform 0.15s;
+      font-size: 0.75rem;
+    }
+    .grades-toggle .arrow.open {
+      transform: rotate(90deg);
+    }
+    .grades-content {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .grades-content.open {
+      display: block;
+    }
+    .grades-summary {
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .grade-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .grade-pass { background: var(--green-bg); color: var(--green); }
+    .grade-fail { background: var(--red-bg); color: var(--red); }
+    .assertion-list {
+      list-style: none;
+    }
+    .assertion-item {
+      padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+    .assertion-item:last-child { border-bottom: none; }
+    .assertion-status {
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+    .assertion-status.pass { color: var(--green); }
+    .assertion-status.fail { color: var(--red); }
+    .assertion-evidence {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+      padding-left: 1.5rem;
+    }
+
+    /* ---- View tabs ---- */
+    .view-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .view-tab {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .view-tab:hover { color: var(--text); }
+    .view-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .view-panel { display: none; }
+    .view-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ---- Benchmark view ---- */
+    .benchmark-view {
+      padding: 1.5rem 2rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .benchmark-table {
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.8125rem;
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .benchmark-table th, .benchmark-table td {
+      padding: 0.625rem 0.75rem;
+      text-align: left;
+      border: 1px solid var(--border);
+    }
+    .benchmark-table th {
+      font-family: 'Poppins', sans-serif;
+      background: var(--header-bg);
+      color: var(--header-text);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .benchmark-table tr:hover { background: var(--bg); }
+    .benchmark-table tr.benchmark-row-with { background: rgba(33, 150, 243, 0.06); }
+    .benchmark-table tr.benchmark-row-without { background: rgba(255, 193, 7, 0.06); }
+    .benchmark-table tr.benchmark-row-with:hover { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-without:hover { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-table tr.benchmark-row-avg { font-weight: 600; border-top: 2px solid var(--border); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-with { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-without { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-delta-positive { color: var(--green); font-weight: 600; }
+    .benchmark-delta-negative { color: var(--red); font-weight: 600; }
+    .benchmark-notes {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    .benchmark-notes h3 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+    .benchmark-notes ul {
+      list-style: disc;
+      padding-left: 1.25rem;
+    }
+    .benchmark-notes li {
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      margin-bottom: 0.375rem;
+    }
+    .benchmark-empty {
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+      padding: 3rem;
+    }
+
+    /* ---- Navigation ---- */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .nav-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .nav-btn:hover:not(:disabled) {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .done-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .done-btn:hover {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .done-btn.ready {
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .done-btn.ready:hover {
+      background: var(--accent-hover);
+    }
+    /* ---- Done overlay ---- */
+    .done-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .done-overlay.visible {
+      display: flex;
+    }
+    .done-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 2rem 3rem;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+    }
+    .done-card h2 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .done-card p {
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .done-card .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+    }
+    .done-card button {
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .done-card button:hover {
+      background: var(--bg);
+    }
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 0.625rem 1.25rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 200;
+    }
+    .toast.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" style="height:100vh; display:flex; flex-direction:column;">
+    <div class="header">
+      <div>
+        <h1>Eval Review: <span id="skill-name"></span></h1>
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+      </div>
+      <div class="progress" id="progress"></div>
+    </div>
+
+    <!-- View tabs (only shown when benchmark data exists) -->
+    <div class="view-tabs" id="view-tabs" style="display:none;">
+      <button class="view-tab active" onclick="switchView('outputs')">Outputs</button>
+      <button class="view-tab" onclick="switchView('benchmark')">Benchmark</button>
+    </div>
+
+    <!-- Outputs panel (qualitative review) -->
+    <div class="view-panel active" id="panel-outputs">
+    <div class="main">
+      <!-- Prompt -->
+      <div class="section">
+        <div class="section-header">Prompt <span class="config-badge" id="config-badge" style="display:none;"></span></div>
+        <div class="section-body">
+          <div class="prompt-text" id="prompt-text"></div>
+        </div>
+      </div>
+
+      <!-- Outputs -->
+      <div class="section">
+        <div class="section-header">Output</div>
+        <div class="section-body" id="outputs-body">
+          <div class="empty-state">No output files found</div>
+        </div>
+      </div>
+
+      <!-- Previous Output (collapsible) -->
+      <div class="section" id="prev-outputs-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="togglePrevOutputs()">
+            <span class="arrow" id="prev-outputs-arrow">&#9654;</span>
+            Previous Output
+          </div>
+        </div>
+        <div class="grades-content" id="prev-outputs-content"></div>
+      </div>
+
+      <!-- Grades (collapsible) -->
+      <div class="section" id="grades-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="toggleGrades()">
+            <span class="arrow" id="grades-arrow">&#9654;</span>
+            Formal Grades
+          </div>
+        </div>
+        <div class="grades-content" id="grades-content"></div>
+      </div>
+
+      <!-- Feedback -->
+      <div class="section">
+        <div class="section-header">Your Feedback</div>
+        <div class="section-body">
+          <textarea
+            class="feedback-textarea"
+            id="feedback"
+            placeholder="What do you think of this output? Any issues, suggestions, or things that look great?"
+          ></textarea>
+          <div class="feedback-status" id="feedback-status"></div>
+          <div class="prev-feedback" id="prev-feedback" style="display:none;">
+            <div class="prev-feedback-label">Previous feedback</div>
+            <div id="prev-feedback-text"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav" id="outputs-nav">
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">&#8592; Previous</button>
+      <button class="done-btn" id="done-btn" onclick="showDoneDialog()">Submit All Reviews</button>
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)">Next &#8594;</button>
+    </div>
+    </div><!-- end panel-outputs -->
+
+    <!-- Benchmark panel (quantitative stats) -->
+    <div class="view-panel" id="panel-benchmark">
+      <div class="benchmark-view" id="benchmark-content">
+        <div class="benchmark-empty">No benchmark data available. Run a benchmark to see quantitative results here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Done overlay -->
+  <div class="done-overlay" id="done-overlay">
+    <div class="done-card">
+      <h2>Review Complete</h2>
+      <p>Your feedback has been saved. Go back to your Claude Code session and tell Claude you're done reviewing.</p>
+      <div class="btn-row">
+        <button onclick="closeDoneDialog()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---- Embedded data (injected by generate_review.py) ----
+    const EMBEDDED_DATA = {"skill_name": "paper-reading-workflow", "runs": [{"id": "eval-1-paper-add-with_skill", "prompt": "\u5e2e\u6211\u628a\u8fd9\u7bc7\u8bba\u6587\u52a0\u5230Notion\u91cc https://arxiv.org/abs/2301.12345", "eval_id": 1, "outputs": [{"name": "response.md", "type": "text", "content": "# Response: Adding Paper https://arxiv.org/abs/2301.12345 to Notion\n\n\u597d\u7684\uff0c\u6211\u6765\u5e2e\u4f60\u628a\u8fd9\u7bc7\u8bba\u6587\u6dfb\u52a0\u5230 Notion\u3002\u6700\u7b80\u5355\u7684\u505a\u6cd5\u662f\u76f4\u63a5\u7528 `run_pipeline()` \u4e00\u6b65\u5b8c\u6210\uff1a\n\n```python\nfrom paper_tool.pipeline import run_pipeline\n\nsuccess = run_pipeline(\"https://arxiv.org/abs/2301.12345\")\n```\n\n\u8fd9\u4e2a\u51fd\u6570\u5185\u90e8\u4f1a\u81ea\u52a8\u6267\u884c\u5b8c\u6574\u7684\u6d41\u7a0b\uff1a\u4e0b\u8f7d PDF\u3001\u63d0\u53d6\u6587\u672c\u548c\u56fe\u8868\u3001LLM \u5206\u7c7b/\u603b\u7ed3/\u7cbe\u8bfb\u5206\u6790\u3001\u5199 Notion \u9875\u9762\u3002\u5b8c\u6210\u540e Notion \u91cc\u4f1a\u6709\u4e00\u7bc7\u7ed3\u6784\u5316\u7684\u9605\u8bfb\u7b14\u8bb0\uff0c\u5305\u542b\uff1a\n\n- \u8bba\u6587\u5143\u6570\u636e\uff08\u6807\u9898\u3001\u4f5c\u8005\u3001\u5e74\u4efd\u3001\u94fe\u63a5\uff09\n- LLM \u751f\u6210\u7684\u5206\u7c7b\u6807\u7b7e\uff08\u9886\u57df\u3001\u65b9\u6cd5\u3001\u8d21\u732e\u7c7b\u578b\u7b49\uff09\n- \u4e00\u53e5\u8bdd\u603b\u7ed3\n- \u5b8c\u6574\u7684\u9605\u8bfb\u7b14\u8bb0\uff08\u80cc\u666f\u3001\u65b9\u6cd5\u3001\u8d21\u732e\u3001\u5b9e\u9a8c\u3001\u5c40\u9650\u6027\u7b49\uff09\n- \u56fe\u8868\uff08Figure \u548c Table \u4ee5\u56fe\u7247\u5f62\u5f0f\u5d4c\u5165\uff09\n\n\u5982\u679c\u9700\u8981\u66f4\u591a\u63a7\u5236\uff08\u6bd4\u5982\u8df3\u8fc7\u67d0\u4e9b\u6b65\u9aa4\u3001\u4f7f\u7528\u81ea\u5b9a\u4e49\u53c2\u6570\uff09\uff0c\u53ef\u4ee5\u6309 step-by-step \u65b9\u5f0f\u76f4\u63a5\u8c03\u7528\u5404\u4e2a\u51fd\u6570\uff1a\n\n```python\nfrom paper_tool.config import PipelineContext\nfrom paper_tool.pipeline import download_paper, extract_paper_text\nfrom paper_tool.llm_classifier import LLMClassifier\nfrom paper_tool.llm_summarizer import LLMSummarizer\nfrom paper_tool.llm_analyzer import LLMAnalyzer, translate_captions\nfrom paper_tool.notion_service import NotionService\n\nctx = PipelineContext.from_config()\n\n# 1. \u4e0b\u8f7d\nresult = download_paper(\"https://arxiv.org/abs/2301.12345\", ctx.papers_dir)\n\n# 2. \u63d0\u53d6\u6587\u672c\u548c\u56fe\u8868\next = extract_paper_text(\n    result.downloader, result.metadata, result.pdf_path, ctx.papers_dir,\n    max_input_tokens=ctx.llm_max_input_tokens,\n    max_figures=ctx.max_figures,\n    max_tables=ctx.max_tables,\n)\n\n# 3. \u521b\u5efa Notion \u9875\u9762\nnotion = NotionService.from_context(ctx)\npage_id = notion.create_page(result.metadata)\n\n# 4. \u5206\u7c7b\nclassifier = LLMClassifier.from_context(ctx)\noptions = notion.get_classification_options()\nclassification = classifier.classify(result.metadata, options)\nnotion.update_classifications(page_id, classification)\n\n# 5. \u603b\u7ed3\nsummarizer = LLMSummarizer.from_context(ctx)\nsummary = summarizer.summarize(result.metadata)\nnotion.update_summary(page_id, summary)\n\n# 6. \u7ffb\u8bd1\u56fe\u8868\u6807\u9898\nif ext.figures:\n    ext.figures = translate_captions(ext.figures, model=ctx.llm_model)\n\n# 7. LLM \u7cbe\u8bfb\u751f\u6210\u7b14\u8bb0\nanalyzer = LLMAnalyzer.from_context(ctx)\nnote = analyzer.analyze(result.metadata, ext.paper_text,\n                        figures=ext.figures, tables=ext.tables)\n\n# 8. \u5199\u56de Notion\uff08\u542b\u56fe\u8868\uff09\nnotion.append_note_with_figures(page_id, note, ext.figures, ext.tables)\n```\n\n\u8981\u6211\u73b0\u5728\u6267\u884c `run_pipeline()` \u5417\uff1f\u8fd8\u662f\u4f60\u60f3\u8c03\u6574\u67d0\u4e9b\u53c2\u6570\uff08\u6bd4\u5982\u8df3\u8fc7 LLM \u5206\u6790\u3001\u6307\u5b9a\u81ea\u5b9a\u4e49 prompt \u7b49\uff09\uff1f\n"}], "grading": {"expectations": [{"text": "References PipelineContext.from_config() or imports from paper_tool", "passed": true, "evidence": "Imports PipelineContext from paper_tool.config, download_paper/extract_paper_text from paper_tool.pipeline, LLMClassifier/LLMSummarizer/LLMAnalyzer from respective modules, NotionService from paper_tool.notion_service"}, {"text": "Mentions download_paper() or composable pipeline step functions", "passed": true, "evidence": "Shows both run_pipeline() shortcut and full 8-step composable workflow with download_paper(), extract_paper_text(), classifier.classify(), summarizer.summarize(), analyzer.analyze(), notion.append_note_with_figures()"}, {"text": "Explains what the pipeline does (download, extract, analyze, write to Notion)", "passed": true, "evidence": "Lists 8 numbered steps: download, extract text/figures, create Notion page, classify, summarize, translate captions, LLM analysis, write note with figures"}, {"text": "Response is actionable with importable/callable Python code", "passed": true, "evidence": "Provides complete copy-pasteable Python code with all necessary imports and ctx = PipelineContext.from_config() initialization"}]}}, {"id": "eval-1-paper-add-without_skill", "prompt": "\u5e2e\u6211\u628a\u8fd9\u7bc7\u8bba\u6587\u52a0\u5230Notion\u91cc https://arxiv.org/abs/2301.12345", "eval_id": 1, "outputs": [{"name": "response.md", "type": "text", "content": "# Response to: \u5e2e\u6211\u628a\u8fd9\u7bc7\u8bba\u6587\u52a0\u5230Notion\u91cc https://arxiv.org/abs/2301.12345\n\n\u597d\u7684\uff0c\u6211\u6765\u5e2e\u4f60\u628a\u8fd9\u7bc7\u6587\u7ae0\u52a0\u5230Notion\u4e2d\u3002\u4f7f\u7528\u8fd9\u4e2a\u547d\u4ee4\uff1a\n\n```bash\nuv run paper-tool add https://arxiv.org/abs/2301.12345\n```\n\n\u8fd9\u4e2a\u547d\u4ee4\u4f1a\u505a\u4ee5\u4e0b\u51e0\u4ef6\u4e8b\uff1a\n\n1. **\u4e0b\u8f7d PDF** - \u4ece arxiv \u4e0b\u8f7d\u8bba\u6587\u7684 PDF \u6587\u4ef6\n2. **LLM \u5206\u6790** - \u4f7f\u7528\u914d\u7f6e\u7684 LLM \u6a21\u578b\u5bf9\u8bba\u6587\u5185\u5bb9\u8fdb\u884c\u5206\u6790\u548c\u603b\u7ed3\n3. **\u5199\u5165 Notion** - \u5c06\u8bba\u6587\u5143\u6570\u636e\u548c AI \u751f\u6210\u7684\u7b14\u8bb0\u5199\u5165\u4f60\u914d\u7f6e\u7684 Notion \u6570\u636e\u5e93\n\n\u5982\u679c\u4f60\u53ea\u60f3\u5bfc\u5165\u8bba\u6587\u5143\u6570\u636e\u800c\u4e0d\u8fdb\u884c LLM \u5206\u6790\uff0c\u53ef\u4ee5\u52a0\u4e0a `--skip-llm` \u53c2\u6570\uff1a\n\n```bash\nuv run paper-tool add --skip-llm https://arxiv.org/abs/2301.12345\n```\n\n\u5982\u679c\u4f60\u60f3\u67e5\u770b\u8be6\u7ec6\u7684\u8c03\u8bd5\u4fe1\u606f\uff08\u5305\u62ec LLM \u7684\u539f\u59cb prompt \u548c\u54cd\u5e94\uff09\uff0c\u53ef\u4ee5\u52a0\u4e0a `--debug` \u53c2\u6570\uff1a\n\n```bash\nuv run paper-tool add --debug https://arxiv.org/abs/2301.12345\n```\n\n\u9700\u8981\u6211\u5e2e\u4f60\u6267\u884c\u8fd9\u4e2a\u547d\u4ee4\u5417\uff1f\n"}], "grading": {"expectations": [{"text": "References PipelineContext.from_config() or imports from paper_tool", "passed": false, "evidence": "Only shows CLI commands (uv run paper-tool add); no Python imports or PipelineContext usage"}, {"text": "Mentions download_paper() or composable pipeline step functions", "passed": false, "evidence": "Only references the monolithic paper-tool CLI, no composable function mentions"}, {"text": "Explains what the pipeline does (download, extract, analyze, write to Notion)", "passed": true, "evidence": "Lists 3 steps: download PDF, LLM analysis, write to Notion"}, {"text": "Response is actionable with importable/callable Python code", "passed": false, "evidence": "Only provides bash CLI commands, no Python code"}]}}, {"id": "eval-2-latex-debug-with_skill", "prompt": "\u8bba\u6587\u7684\u56fe\u8868\u6e32\u67d3\u5931\u8d25\u4e86\uff0ctable\u663e\u793a\u7684\u662fmatplotlib\u964d\u7ea7\u7248\u672c\uff0c\u5f88\u96be\u770b\u3002\u600e\u4e48\u8c03\u8bd5\uff1f", "eval_id": 2, "outputs": [{"name": "response.md", "type": "text", "content": "# \u8868\u683c LaTeX \u6e32\u67d3\u964d\u7ea7\u5230 matplotlib \u7684\u8c03\u8bd5\u65b9\u6cd5\n\n## \u95ee\u9898\u672c\u8d28\n\n\u8868\u683c\u663e\u793a\u4e3a matplotlib \u7248\u672c\uff0c\u8bf4\u660e pdflatex \u7f16\u8bd1\u5931\u8d25\u4e86\u3002`table_extractor.py` \u7684\u6d41\u7a0b\u662f\uff1a\u5148\u5c1d\u8bd5 pdflatex \u7f16\u8bd1\uff08\u4e24\u6b21\uff09\uff0c\u5982\u679c\u90fd\u5931\u8d25\uff0c\u4e14\u6709 `has_matplotlib_fallback` \u53ef\u7528\uff0c\u5c31\u56de\u9000\u5230 matplotlib \u6e32\u67d3\u8868\u683c\u3002\u8fd9\u5c31\u662f\u4f60\u770b\u5230\u7684 \"\u964d\u7ea7\u7248\u672c\" \u7684\u6765\u6e90\u3002\n\n## \u8c03\u8bd5\u6b65\u9aa4\n\n### Step 1: \u5b9a\u4f4d debug \u4ea7\u7269\n\n\u8fdb\u5165\u8be5\u8bba\u6587\u7684 debug \u76ee\u5f55\uff0c\u770b\u770b\u6e32\u67d3\u72b6\u6001\uff1a\n\n```\npapers/<paper_dir>/debug/\n```\n\n\u91cd\u70b9\u770b\u8fd9\u51e0\u4e2a\u6587\u4ef6\uff1a\n\n| \u6587\u4ef6 | \u4f5c\u7528 |\n|------|------|\n| `tab_NNN.json` | \u6e32\u67d3\u72b6\u6001\uff0c`renderer` \u5b57\u6bb5\u5982\u679c\u662f `\"matplotlib\"` \u8bf4\u660e\u964d\u7ea7\u4e86 |\n| `tab_NNN.tex` | \u4e3a\u8fd9\u5f20\u8868\u751f\u6210\u7684\u72ec\u7acb LaTeX \u6587\u4ef6 |\n| `tab_NNN.log` | pdflatex \u7f16\u8bd1\u65e5\u5fd7\uff0c**\u8fd9\u662f\u8bca\u65ad\u7684\u6838\u5fc3** |\n| `tab_NNN.stdout` / `tab_NNN.stderr` | pdflatex \u6807\u51c6\u8f93\u51fa\u548c\u9519\u8bef |\n\n### Step 2: \u7528 debug \u811a\u672c\u5feb\u901f\u590d\u73b0\n\n\u76f4\u63a5\u91cd\u65b0\u8dd1\u4e00\u6b21\u5b8c\u6574\u7684 `paper-tool add` \u5f88\u6162\uff0c\u7528 debug \u811a\u672c\u5355\u72ec\u7f16\u8bd1\u4e00\u5f20\u8868\uff1a\n\n```bash\nbash .claude/skills/paper-reading-workflow/scripts/debug-table.sh \\\n  papers/<paper_dir>/paper.tex <table_index>\n```\n\n\u8fd9\u4e2a\u811a\u672c\u505a\u4e86\uff1a\u63d0\u53d6 preamble + body \u4e2d\u5728\u8868\u4e4b\u524d\u7684\u5b8f\u5b9a\u4e49 \u2192 \u6784\u5efa\u72ec\u7acb LaTeX \u6587\u6863 \u2192 pdflatex \u7f16\u8bd1 \u2192 \u8f6c PNG\u3002\u5982\u679c\u5728\u8fd9\u6b65\u5c31\u5931\u8d25\u4e86\uff0c\u4f60\u5c31\u62ff\u5230\u4e86\u6700\u5c0f\u590d\u73b0\u6848\u4f8b\u3002\n\n### Step 3: \u8bfb .log \u627e\u6839\u56e0\n\n\u6253\u5f00 `tab_NNN.log`\uff0c\u641c\u7d22 `!` \u5f00\u5934\u7684\u884c\u3002\u5e38\u89c1\u7684\u5931\u8d25\u6a21\u5f0f\u5982\u4e0b\uff1a\n\n- **`! Undefined control sequence`** -- \u8fd9\u662f\u6700\u5e38\u89c1\u7684\u539f\u56e0\u3002\u67d0\u4e2a\u81ea\u5b9a\u4e49\u5b8f\u6ca1\u6709\u6ce8\u5165\u5230 preamble \u91cc\u3002\u68c0\u67e5\u662f\u54ea\u79cd\u5b8f\uff1a\n  - `\\newcommand` \u5b9a\u4e49\u5728 body \u91cc\uff08`\\begin{document}` \u4e4b\u540e\uff09\u4f46\u5728\u8fd9\u5f20\u8868\u4e4b\u524d \u2192 body \u626b\u63cf\u903b\u8f91\u53ef\u80fd\u6f0f\u4e86\u5b83\n  - `\\def`\u3001`\\newcolumntype`\u3001`\\pgfplotsset`\u3001`\\tikzset` \u7b49\u5b8f\u7c7b\u578b\u53ef\u80fd\u6ca1\u6709\u88ab\u626b\u63cf\n  - \u4fee\u590d\u70b9\uff1a`table_extractor.py` \u4e2d\u6ce8\u5165 preamble \u5b8f\u7684\u903b\u8f91\n\n- **`! LaTeX Error: File '...' not found`** -- \u7f3a\u5c11 LaTeX \u5305\u6216 pgfplotstable \u5f15\u7528\u7684\u5916\u90e8\u6570\u636e\u6587\u4ef6\u3002\u5982\u679c\u662f\u6570\u636e\u6587\u4ef6\uff0c\u68c0\u67e5 `source/` \u76ee\u5f55\u4e0b\u662f\u5426\u5b58\u5728\uff0c\u8def\u5f84\u89e3\u6790\u53ef\u80fd\u9700\u8981\u8c03\u6574\n\n- **`! Extra alignment tab`** -- tabular \u5217\u6570\u4e0e\u5b9e\u9645\u6570\u636e\u4e0d\u5339\u914d\uff0c\u6e90\u6587\u4ef6\u5c31\u5199\u9519\u4e86\uff0c\u4e00\u822c\u5f88\u5c11\u89c1\n\n- **`\\resizebox` wrapping \u5bfc\u81f4\u7f16\u8bd1\u5f02\u5e38** -- standalone class \u5904\u7406 `\\resizebox{\\textwidth}{!}{...}` \u6709\u95ee\u9898\u3002debug \u811a\u672c\u5df2\u7ecf\u4f1a\u81ea\u52a8 strip `resizebox`/`scalebox`/`adjustbox`\uff0c\u4f46\u5982\u679c `table_extractor.py` \u7684\u9884\u5904\u7406\u6ca1\u6709\u505a\u76f8\u540c\u7684 strip\uff0c\u5c31\u53ef\u80fd\u5bfc\u81f4\u5b9e\u9645\u6e32\u67d3\u5931\u8d25\n\n### Step 4: \u4fee\u4ee3\u7801\n\n\u5b9a\u4f4d\u5230\u5177\u4f53\u539f\u56e0\u540e\uff0c\u5728 `src/paper_tool/table_extractor.py` \u91cc\u6539\u5bf9\u5e94\u7684\u89e3\u6790\u903b\u8f91\uff1a\n\n- \u5982\u679c\u662f **body \u91cc\u7684\u5b8f\u6ca1\u626b\u5230**\uff1a\u53c2\u8003 `debug-table.sh` \u91cc body_macros \u7684\u63d0\u53d6\u903b\u8f91\uff08`\\newcommand`\u3001`\\def`\u3001`\\newcolumntype`\u3001`\\pgfplotsset`\u3001`\\tikzset`\uff09\uff0c\u786e\u4fdd `table_extractor.py` \u5728\u7f16\u8bd1\u524d\u4e5f\u6ce8\u5165\u4e86\u8fd9\u4e9b\u3002\u6ce8\u610f\u6700\u8fd1 commit `6f7707c` \u4e5f\u662f\u4fee\u7c7b\u4f3c\u95ee\u9898\uff08body \u5185\u5b8f\u5b9a\u4e49\u672a\u88ab\u6ce8\u5165\uff09\uff0c\u53ef\u4ee5\u53c2\u8003\u90a3\u4e2a commit \u7684\u6539\u52a8\u65b9\u5f0f\n\n- \u5982\u679c\u662f **preamble \u5b8f\u4e0d\u5168**\uff1a\u68c0\u67e5 `_expand_tex_includes` \u662f\u5426\u6b63\u786e\u5408\u5e76\u4e86\u6240\u6709 `\\input`/`\\include` \u6587\u4ef6\uff0c\u4ee5\u53ca\u81ea\u5b9a\u4e49 `.sty` \u6587\u4ef6\u4e2d\u7684\u5b9a\u4e49\u662f\u5426\u88ab\u7eb3\u5165\n\n### Step 5: \u9a8c\u8bc1\u4fee\u590d\n\n\u4fee\u597d\u540e\uff0c\u5bf9\u76ee\u6807\u8bba\u6587\u91cd\u65b0\u8dd1\u4e00\u6b21\uff08\u8bb0\u5f97\u52a0 `--force --rerender-tables`\uff09\uff1a\n\n```bash\nuv run paper-tool add <paper_url> --force --rerender-tables --debug\n```\n\n\u7136\u540e\u786e\u8ba4 `debug/tab_NNN.json` \u7684 `renderer` \u5b57\u6bb5\u53d8\u6210\u4e86 `\"latex\"`\u3002\n\n**\u56de\u5f52\u68c0\u67e5**\uff1a\u4fee\u590d\u540e\u8fd8\u8981\u627e\u4e00\u5f20\u4e4b\u524d\u6b63\u5e38\u6e32\u67d3\u7684\u8bba\u6587\uff0c\u7528 `--force --rerender-tables` \u91cd\u8dd1\uff0c\u786e\u8ba4\u4e0d\u88ab\u4f60\u7684\u6539\u52a8\u641e\u574f\u3002\u6839\u636e `reference/latex-failure-patterns.md` \u7684 checklist\uff0c\u81f3\u5c11\u68c0\u67e5\uff1a\u6807\u51c6 tabular\u3001resizebox \u5305\u88f9\u3001pgfplotstable \u8fd9\u4e09\u7c7b\u8868\u683c\u662f\u5426\u4ecd\u80fd\u6b63\u5e38\u6e32\u67d3\u3002\n\n## \u5feb\u901f\u68c0\u67e5\u6e05\u5355\n\n1. `papers/<paper_dir>/debug/tab_NNN.json` -- \u786e\u8ba4 `renderer` \u662f `\"matplotlib\"`\n2. `papers/<paper_dir>/debug/tab_NNN.log` -- \u641c\u7d22 `!` \u627e\u5177\u4f53\u9519\u8bef\n3. `bash debug-table.sh papers/<paper_dir>/paper.tex N` -- \u72ec\u7acb\u590d\u73b0\n4. \u4fee\u590d `src/paper_tool/table_extractor.py` \u4e2d\u7684\u89e3\u6790\u903b\u8f91\n5. `uv run paper-tool add <url> --force --rerender-tables` -- \u9a8c\u8bc1\u4fee\u590d\n6. \u91cd\u8dd1\u4e00\u5f20\u4e4b\u524d\u6b63\u5e38\u7684\u8bba\u6587\u4f5c\u4e3a\u56de\u5f52\u68c0\u67e5\n"}], "grading": {"expectations": [{"text": "Points to papers/<paper_dir>/debug/ for diagnostic artifacts", "passed": true, "evidence": "Lists tab_NNN.json, tab_NNN.tex, tab_NNN.log, tab_NNN.stdout/stderr in papers/<paper_dir>/debug/"}, {"text": "Mentions debug-table.sh script for isolation", "passed": true, "evidence": "Shows bash .claude/skills/paper-reading-workflow/scripts/debug-table.sh papers/<paper_dir>/paper.tex <table_index>"}, {"text": "References latex-failure-patterns.md or common failure patterns", "passed": true, "evidence": "References reference/latex-failure-patterns.md checklist and categorizes failures (Undefined control sequence, File not found, Extra alignment tab, resizebox wrapping)"}, {"text": "Explains re-import after fixing (--force --rerender-tables)", "passed": true, "evidence": "Shows uv run paper-tool add <paper_url> --force --rerender-tables --debug"}, {"text": "Mentions regression verification on previously-working papers", "passed": true, "evidence": "Explicitly says to re-run a previously-working paper with --force --rerender-tables and check standard tabular, resizebox, pgfplotstable table types"}]}}, {"id": "eval-2-latex-debug-without_skill", "prompt": "\u8bba\u6587\u7684\u56fe\u8868\u6e32\u67d3\u5931\u8d25\u4e86\uff0ctable\u663e\u793a\u7684\u662fmatplotlib\u964d\u7ea7\u7248\u672c\uff0c\u5f88\u96be\u770b\u3002\u600e\u4e48\u8c03\u8bd5\uff1f", "eval_id": 2, "outputs": [{"name": "response.md", "type": "text", "content": "# \u8868\u683c LaTeX \u6e32\u67d3\u964d\u7ea7\u5230 matplotlib \u7684\u8c03\u8bd5\u65b9\u6cd5\n\n## \u6e32\u67d3\u964d\u7ea7\u94fe\n\n\u8868\u683c\u6e32\u67d3\u8d70\u4e09\u7ea7\u964d\u7ea7\u94fe\uff08\u89c1 `src/paper_tool/table_extractor.py`\uff09\uff1a\n\n```\npdflatex \u7f16\u8bd1\uff08\u539f\u59cb table body\uff09\n  -> \u5931\u8d25 -> pdflatex \u91cd\u8bd5\uff08\u5265\u79bb \\resizebox/\\scalebox/\\adjustbox/center\uff09\n    -> \u5931\u8d25 -> matplotlib \u515c\u5e95\u6e32\u67d3\uff08\u89e3\u6790 tabular \u884c\uff0cbooktabs \u98ce\u683c PNG\uff09\n```\n\n\u5f53\u770b\u5230 matplotlib \u7248\u672c\u65f6\uff0c\u8bf4\u660e\u524d\u4e24\u6b21 pdflatex \u90fd\u5931\u8d25\u4e86\u3002matplotlib \u7248\u672c\u4e22\u5931\u4e86\u539f\u8bba\u6587\u7684\u5217\u989c\u8272\u3001\u5b57\u4f53\u6837\u5f0f\u3001\u884c\u8ddd\u7b49\u6392\u7248\u6548\u679c\uff0c\u9700\u8981\u8ba9 LaTeX \u7f16\u8bd1\u8def\u5f84\u6210\u529f\u3002\n\n## \u7b2c\u4e00\u6b65\uff1a\u5b9a\u4f4d\u95ee\u9898\u662f\u54ea\u4e2a\u8868\n\ndebug \u4ea7\u7269\u5728 `papers/<paper_dir>/debug/` \u4e0b\u3002\u6bcf\u4e2a\u8868\u6709\u4e00\u7ec4\u6587\u4ef6\uff1a\n\n| \u6587\u4ef6 | \u8bf4\u660e |\n|------|------|\n| `table_XX.json` | \u6e32\u67d3\u7ed3\u679c\u5143\u6570\u636e\uff0c`renderer` \u5b57\u6bb5\u544a\u8bc9\u4f60\u5b9e\u9645\u8d70\u7684\u662f `latex` \u8fd8\u662f `matplotlib` |\n| `table_XX.latex.tex` | \u5b9e\u9645\u7f16\u8bd1\u7684 standalone LaTeX \u6e90\u7801\uff0c\u8fd9\u662f\u6700\u91cd\u8981\u7684\u6587\u4ef6 |\n| `table_XX.latex.log` | pdflatex \u5b8c\u6574\u7f16\u8bd1\u65e5\u5fd7 |\n| `table_XX.latex.stderr.txt` | pdflatex \u6807\u51c6\u9519\u8bef\u8f93\u51fa |\n\n\u5148\u786e\u8ba4\u54ea\u4e9b\u8868\u8d70\u4e86 matplotlib\uff1a\n\n```bash\ngrep -l '\"renderer\": \"matplotlib\"' papers/*/debug/table_*.json\n```\n\n## \u7b2c\u4e8c\u6b65\uff1a\u770b\u7f16\u8bd1\u9519\u8bef\n\n\u7528 `.log` \u6587\u4ef6\u67e5\u5177\u4f53\u5931\u8d25\u539f\u56e0\uff1a\n\n```bash\n# \u770b\u6240\u6709\u9519\u8bef\ngrep -E '^!|Error|Fatal|Undefined' papers/<paper_id>/debug/table_XX.latex.log\n```\n\n\u5e38\u89c1\u9519\u8bef\u7c7b\u578b\u53ca\u5176\u539f\u56e0\uff1a\n\n### `! Undefined control sequence`\n\u8bba\u6587\u7528\u4e86\u81ea\u5b9a\u4e49\u547d\u4ee4\uff0c\u4f46 standalone \u6a21\u677f\u4e2d\u6ca1\u6709\u5b9a\u4e49\u5b83\u3002\u67e5\u627e\u662f\u54ea\u4e2a\u547d\u4ee4\uff1a\n```bash\ngrep 'Undefined control sequence' papers/<paper_id>/debug/table_XX.latex.log\n```\n\u7136\u540e\u53bb `table_XX.latex.tex` \u91cc\u627e\u5230\u8be5\u547d\u4ee4\uff0c\u518d\u5230\u539f\u59cb `paper.tex` \u91cc\u67e5\u5b83\u7684\u5b9a\u4e49\u6765\u6e90\u3002\u5982\u679c\u5b9a\u4e49\u5728 preamble \u4e2d\uff0c`_extract_preamble_macros` \u5e94\u8be5\u5df2\u7ecf\u63d0\u53d6\u4e86\uff1b\u5982\u679c\u5b9a\u4e49\u5728 body \u4e2d\uff0c\u53ea\u6709\u7d27\u90bb\u8868\u683c\u4e4b\u524d\u7684\u5b9a\u4e49\u624d\u4f1a\u88ab\u6293\u53d6\uff08`parse_tables` \u7b2c 901-907 \u884c\uff09\u3002\u5982\u679c\u547d\u4ee4\u7531\u67d0\u4e2a\u672a\u52a0\u8f7d\u7684 sty/\u5b8f\u5305\u5b9a\u4e49\uff0c\u9700\u8981\u52a0 `\\providecommand` stub\u3002\n\n### `! LaTeX Error: Missing \\begin{document}`\n\u67d0\u4e2a\u88ab\u6ce8\u5165 preamble \u7684\u5b8f\u5b9a\u4e49\u4e2d\u542b\u6709\u5fc5\u987b\u5728 `\\begin{document}` \u4e4b\u540e\u624d\u80fd\u4f7f\u7528\u7684\u6392\u7248\u547d\u4ee4\u3002\u4f8b\u5982 `\\renewcommand{\\fnum@figure}{\\figurename~\\textcolor{violet}{\\thefigure}}` \u2014\u2014`\\textcolor` \u662f\u6392\u7248\u547d\u4ee4\uff0c\u4e0d\u80fd\u51fa\u73b0\u5728 preamble \u91cc\u3002\n\n**\u5b9a\u4f4d\u65b9\u6cd5**\uff1a\u68c0\u67e5 `table_XX.latex.tex` \u4e2d `@@PREAMBLE_MACROS@@` \u533a\u57df\uff08\u5373 `\\providecommand{\\parencite}...` \u4e4b\u524d\u7684\u81ea\u5b9a\u4e49\u5b8f\u533a\u57df\uff09\uff0c\u770b\u6709\u6ca1\u6709 `\\textcolor`\u3001`\\colorbox`\u3001`\\makebox` \u7b49\u6392\u7248\u547d\u4ee4\u3002\n\n### `! Extra alignment tab` \u6216 `! Misplaced \\noalign`\ntabular \u8bed\u6cd5\u9519\u8bef\uff0c\u901a\u5e38\u662f\u8bba\u6587\u539f\u6587\u5c31\u6709\u95ee\u9898\uff0c\u6216\u8005\u6211\u4eec\u7684 body \u6e05\u7406\u903b\u8f91\u7834\u574f\u4e86 tabular \u7ed3\u6784\u3002\n\n## \u7b2c\u4e09\u6b65\uff1a\u68c0\u67e5 standalone LaTeX \u6e90\u7801\n\n\u6253\u5f00 `table_XX.latex.tex`\uff0c\u91cd\u70b9\u68c0\u67e5\uff1a\n\n### 3a. tabular \u73af\u5883\u662f\u5426\u8fd8\u5728\n\n\u770b `\\begin{document}...\\end{document}` \u4e4b\u95f4\u7684 body \u91cc\u662f\u5426\u8fd8\u80fd\u627e\u5230 `\\begin{tabular}`\u3002\u5982\u679c tabular \u88ab `_remove_command_calls` \u610f\u5916\u5403\u6389\u4e86\uff08\u6bd4\u5982 resizebox \u53c2\u6570\u89e3\u6790\u51fa\u9519\u65f6\u8fde\u540c\u5185\u90e8 tabular \u4e00\u8d77\u5220\u9664\uff09\uff0cbody \u5c31\u4f1a\u53ea\u5269 `\\scriptsize`\u3001`\\setlength` \u8fd9\u7c7b\u5b9a\u4f4d\u547d\u4ee4\u4f46\u6ca1\u6709\u5b9e\u9645\u7684\u8868\u683c\u3002\n\n\u5bf9\u6bd4\u9a8c\u8bc1\uff1a\n```bash\n# \u770b debug \u4ea7\u7269\u4e2d\u7684 table body\nsed -n '/\\\\begin{document}/,/\\\\end{document}/p' papers/<paper_id>/debug/table_XX.latex.tex\n\n# \u770b\u539f\u59cb paper.tex \u4e2d\u5bf9\u5e94\u7684 table \u73af\u5883\u539f\u59cb\u5185\u5bb9\ngrep -A 60 '\\\\begin{table}' papers/<paper_id>/paper.tex | head -80\n```\n\n### 3b. preamble \u5b8f\u662f\u5426\u6b63\u786e\u6ce8\u5165\n\n\u770b `\\providecommand{\\parencite}[1]{[#1]}` \u4e4b\u524d\u7684\u533a\u57df\u3002`@@RENEW_STUBS@@` \u548c `@@PREAMBLE_MACROS@@` \u4f1a\u5728\u8fd9\u91cc\u5c55\u5f00\u3002\u5982\u679c\u8bba\u6587\u7684 `\\newcommand` \u6216 `\\definecolor` \u6ca1\u51fa\u73b0\u5728\u8fd9\u91cc\uff0c\u8bf4\u660e\u63d0\u53d6\u903b\u8f91\u6f0f\u4e86\u3002\n\n### 3c. textwidth \u662f\u5426\u6b63\u786e\n\n\u770b `\\setlength{\\textwidth}{...}` \u7684\u503c\u3002\u5982\u679c\u504f\u5dee\u592a\u5927\u4f1a\u5bfc\u81f4\u8868\u683c\u8d85\u51fa\u88c1\u526a\u533a\u57df\u3002\u8fd9\u4e2a\u503c\u7531 `_detect_textwidth` \u786e\u5b9a\uff08\u5148 probe pdflatex \u5b9e\u6d4b\uff0c\u5931\u8d25\u5219\u7528\u542f\u53d1\u5f0f\u89c4\u5219\u5339\u914d\u5df2\u77e5\u6587\u6863\u7c7b/\u4f1a\u8bae\u6a21\u677f\uff09\u3002\n\n## \u7b2c\u56db\u6b65\uff1a\u91cd\u8dd1\u9a8c\u8bc1\n\n\u4fee\u6539\u4ee3\u7801\u540e\u91cd\u8dd1\uff0c\u8bb0\u5f97\u5f3a\u5236\u91cd\u6e32\u67d3\u4ee5\u8df3\u8fc7\u7f13\u5b58\uff1a\n\n```yaml\n# config.yaml\nllm:\n  rerender_tables: true\n```\n\n```bash\n# \u8df3\u8fc7 LLM \u5206\u6790\u548c Notion \u4e0a\u4f20\uff0c\u53ea\u91cd\u65b0\u8dd1\u63d0\u53d6+\u6e32\u67d3\nuv run paper-tool add <url> --skip-llm\n\n# \u6216\u5e26 debug \u6807\u5fd7\u770b\u5b8c\u6574 prompt\uff08\u8fd9\u662f\u7ed9 LLM \u8c03\u7528\u7684 debug\uff0c\u4e0e LaTeX \u6e32\u67d3\u65e0\u5173\uff09\nuv run paper-tool add <url> --skip-llm --debug\n```\n\n\u6ce8\u610f\uff1a`--debug` \u6807\u5fd7\u63a7\u5236\u7684\u662f LLM prompt/response \u6253\u5370\uff0c\u4e0d\u5f71\u54cd debug \u4ea7\u7269\u5199\u5165\u2014\u2014`papers/<paper_id>/debug/` \u4e0b\u7684\u6587\u4ef6\u59cb\u7ec8\u5728\u751f\u6210\u3002\n\n## \u7b2c\u4e94\u6b65\uff1a\u6309\u6839\u56e0\u5206\u7c7b\u4fee\u590d\n\n\u6839\u636e\u8bca\u65ad\u7ed3\u679c\uff0c\u95ee\u9898\u843d\u5728\u4e0b\u9762\u51e0\u7c7b\u4e4b\u4e00\uff1a\n\n### \u7c7b\u578b A\uff1a\u672a\u5b9a\u4e49\u547d\u4ee4\n\n\u8bba\u6587\u7684 table \u4e2d\u7528\u4e86\u67d0\u4e2a\u547d\u4ee4\u4f46 standalone \u6a21\u677f\u4e0d\u77e5\u9053\u5b83\u3002\u4fee\u590d\u8def\u5f84\uff1a\n- \u53bb `_LATEX_TEMPLATE` \u91cc\u52a0\u5bf9\u5e94\u7684 `\\usepackage`\n- \u6216\u8005\u5728\u6a21\u677f\u7684 `\\providecommand` fallback \u533a\u57df\u52a0 stub\n- \u5982\u679c\u547d\u4ee4\u6765\u81ea body \u4e2d\u800c\u975e preamble \u4e2d\u7684\u5b9a\u4e49\uff0c\u68c0\u67e5 `parse_tables` \u7b2c 901-907 \u884c\u7684 body-before-table \u5b8f\u626b\u63cf\u903b\u8f91\u662f\u5426\u8986\u76d6\u4e86\u8fd9\u79cd\u60c5\u51b5\n\n### \u7c7b\u578b B\uff1apreamble \u5b8f\u4e2d\u6709\u6392\u7248\u547d\u4ee4\n\n`_extract_macros` / `_extract_preamble_macros` \u65e0\u5dee\u522b\u5730\u63d0\u53d6\u6240\u6709 `\\newcommand`/`\\renewcommand`\uff0c\u4f46\u6709\u4e9b\u91cd\u5b9a\u4e49\u91cc\u5305\u542b\u5fc5\u987b\u5728 document body \u5185\u4f7f\u7528\u7684\u547d\u4ee4\u3002\u4fee\u590d\u601d\u8def\uff1a\n- \u5728\u63d0\u53d6\u65f6\u8fc7\u6ee4\u6389\u5305\u542b\u6392\u7248\u547d\u4ee4\u7684\u5b8f\u5b9a\u4e49\n- \u6216\u8005\u628a\u8fd9\u7c7b\u5b8f\u5b9a\u4e49\u79fb\u5230 `\\begin{document}` \u4e4b\u540e\n\n### \u7c7b\u578b C\uff1abody \u6e05\u7406\u903b\u8f91\u7834\u574f\u4e86\u8868\u683c\u7ed3\u6784\n\n`_prepare_table_body` \u6216 `_prepare_table_body_retry` \u4e2d\u5265\u79bb caption/label/resizebox \u7b49\u547d\u4ee4\u65f6\uff0c\u62ec\u53f7\u5e73\u8861\u89e3\u6790\u5931\u6548\u5bfc\u81f4\u8fde\u540c\u5185\u90e8 tabular \u4e00\u8d77\u5220\u9664\u3002\u4fee\u590d\u601d\u8def\uff1a\n- \u5728 `_remove_command_calls` \u4e2d\u6dfb\u52a0\u66f4\u4e25\u683c\u7684\u53c2\u6570\u8fb9\u754c\u68c0\u67e5\n- \u786e\u4fdd `_consume_balanced` \u6b63\u786e\u5904\u7406\u4e86\u5d4c\u5957 `{}` \u7684\u60c5\u51b5\uff08\u5f53\u524d\u5b9e\u73b0\u662f\u9010\u5b57\u7b26\u8ba1\u6570\u62ec\u53f7\uff0c\u5e94\u8be5\u80fd\u5904\u7406\uff0c\u4f46\u53ef\u80fd\u9047\u5230 `{]}` \u4e4b\u7c7b\u7684\u7279\u6b8a\u7ec4\u5408\uff09\n- \u52a0\u4e00\u4e2a\u5b89\u5168\u9600\uff1a\u5982\u679c body \u4e2d\u627e\u4e0d\u5230\u4efb\u4f55 tabular \u73af\u5883\uff0c\u4e0d\u8981\u8fdb pdflatex\uff0c\u76f4\u63a5\u964d\u7ea7\u5230 matplotlib\uff08\u5f53\u524d\u5df2\u7ecf\u6709\u8fd9\u4e2a\u903b\u8f91\uff0c\u4f46\u91cd\u8bd5\u53d8\u4f53\u4e5f\u53ef\u80fd\u4e22\u5931 tabular\uff09\n\n### \u7c7b\u578b D\uff1atextwidth \u4f30\u7b97\u9519\u8bef\n\n\u8868\u683c\u5bbd\u5ea6\u4e0e standalone \u9875\u9762\u4e0d\u5339\u914d\u5bfc\u81f4\u88c1\u526a\u6216\u6ea2\u51fa\u3002\u4fee\u590d\u601d\u8def\uff1a\n- \u5728 `_estimate_textwidth` \u7684 `style_widths` dict \u4e2d\u6dfb\u52a0\u5bf9\u5e94\u7684\u4f1a\u8bae/\u671f\u520a\u6837\u5f0f\u5305\n- \u6216\u8005\u5728 `_probe_textwidth` \u4e2d\u8ba9\u63a2\u6d4b\u6587\u6863\u52a0\u8f7d\u66f4\u591a preamble \u5143\u7d20\u6765\u63d0\u9ad8\u5b9e\u6d4b\u6210\u529f\u7387\n\n## \u5feb\u901f\u547d\u4ee4\u901f\u67e5\n\n```bash\n# \u627e\u6240\u6709 matplotlib \u964d\u7ea7\u7684\u8868\ngrep -l '\"renderer\": \"matplotlib\"' papers/*/debug/table_*.json\n\n# \u770b\u5177\u4f53\u9519\u8bef\ngrep -E '^!|Error|Fatal|Undefined' papers/<paper_id>/debug/table_XX.latex.log\n\n# \u770b standalone tex \u7684 body \u90e8\u5206\uff08\u786e\u8ba4 tabular \u662f\u5426\u8fd8\u5728\uff09\nsed -n '/\\\\begin{document}/,/\\\\end{document}/p' papers/<paper_id>/debug/table_XX.latex.tex\n\n# \u63d0\u53d6\u539f\u59cb\u8bba\u6587\u4e2d\u8be5 table \u7684\u6e90\u7801\ngrep -A 60 '\\\\begin{table}' papers/<paper_id>/paper.tex | head -80\n\n# \u770b\u6ce8\u5165\u7684 preamble \u5b8f\nsed -n '/@@PREAMBLE_MACROS@@\u5360\u4f4d\u88ab\u66ff\u6362\u540e\u5b9e\u9645\u5185\u5bb9/,/\\\\providecommand{\\\\parencite}/p' \\\n  papers/<paper_id>/debug/table_XX.latex.tex\n# \uff08\u66f4\u7b80\u5355\u7684\uff1a\u76f4\u63a5\u770b \\providecommand{\\parencite} \u4e4b\u524d\u7684\u5168\u90e8 preamble \u5185\u5bb9\uff09\nhead -40 papers/<paper_id>/debug/table_XX.latex.tex\n\n# \u5f3a\u5236\u91cd\u6e32\u67d3\nuv run paper-tool add <url> --skip-llm\n```\n"}], "grading": {"expectations": [{"text": "Points to papers/<paper_dir>/debug/ for diagnostic artifacts", "passed": true, "evidence": "Lists table_XX.json, table_XX.latex.tex, table_XX.latex.log, table_XX.latex.stderr.txt with detailed descriptions"}, {"text": "Mentions debug-table.sh script for isolation", "passed": false, "evidence": "No mention of debug-table.sh anywhere in the response"}, {"text": "References latex-failure-patterns.md or common failure patterns", "passed": false, "evidence": "Lists failure patterns (Undefined control sequence, Missing \\begin{document}, Extra alignment tab) but never references latex-failure-patterns.md or the skill's reference docs"}, {"text": "Explains re-import after fixing (--force --rerender-tables)", "passed": false, "evidence": "Mentions rerender_tables: true in config.yaml and --skip-llm flag, but doesn't use --force or --rerender-tables CLI flags together for re-import"}, {"text": "Mentions regression verification on previously-working papers", "passed": false, "evidence": "No mention of regression testing on previously-working papers"}]}}, {"id": "eval-3-batch-import-with_skill", "prompt": "\u6211\u6709\u4e00\u4e2amarkdown\u6587\u4ef6\u91cc\u9762\u670920\u7bc7\u8bba\u6587\u94fe\u63a5\uff0c\u60f3\u5168\u90e8\u5bfc\u5165Notion\u3002\u4f46\u6709\u4e9b\u53ef\u80fd\u4f1a\u5931\u8d25\uff0c\u6211\u4e0d\u60f3\u534a\u8def\u505c\u4e0b\u6765\u3002", "eval_id": 3, "outputs": [{"name": "response.md", "type": "text", "content": "# Batch Import Response\n\n\u5b8c\u5168\u53ef\u4ee5\u505a\u5230\u3002`batch` \u547d\u4ee4\u81ea\u5e26 `--continue-on-error` \u53c2\u6570\uff0c\u4e13\u95e8\u7528\u4e8e\u8fd9\u4e2a\u573a\u666f\u2014\u2014\u67d0\u7bc7\u5931\u8d25\u4e0d\u4f1a\u4e2d\u65ad\u540e\u7eed\u5904\u7406\uff0c\u5168\u90e8\u8dd1\u5b8c\u540e\u4f1a\u6c47\u603b\u6210\u529f/\u5931\u8d25\u6570\u91cf\u3002\n\n## \u63a8\u8350\u547d\u4ee4\n\n```bash\nuv run paper-tool batch <\u4f60\u7684markdown\u6587\u4ef6.md> --continue-on-error\n```\n\n## \u53d1\u751f\u4e86\u4ec0\u4e48\n\n1. **\u81ea\u52a8\u63d0\u53d6\u94fe\u63a5**\uff1a`batch` \u4f1a\u4ece markdown \u6587\u4ef6\u4e2d\u81ea\u52a8\u63d0\u53d6\u6240\u6709 URL\uff08\u652f\u6301 md\u3001txt\u3001csv \u7b49\u4efb\u610f\u6587\u672c\u683c\u5f0f\uff0c\u5b83\u53ea\u626b\u63cf\u91cc\u9762\u51fa\u73b0\u7684 http/https \u94fe\u63a5\uff09\uff0c\u6240\u4ee5\u4e0d\u9700\u8981\u624b\u52a8\u8f6c\u6210\u7eaf URL \u5217\u8868\u3002\n\n2. **\u9010\u7bc7\u5904\u7406**\uff1a\u6bcf\u7bc7\u8bba\u6587\u8d70\u5b8c\u6574\u6d41\u6c34\u7ebf\u2014\u2014\u4e0b\u8f7d PDF\u3001\u63d0\u53d6\u6587\u672c/\u56fe\u8868\u3001\u5199\u5165 Notion\u3001LLM \u5206\u7c7b\u3001\u751f\u6210\u9605\u8bfb\u7b14\u8bb0\u3002\u8fdb\u5ea6\u6761\u4f1a\u5b9e\u65f6\u663e\u793a\u5f53\u524d\u6b65\u9aa4\u3002\n\n3. **\u9047\u9519\u7ee7\u7eed**\uff1a`--continue-on-error` \u7684\u884c\u4e3a\u662f\uff1a\n   - \u5982\u679c\u67d0\u7bc7\u8bba\u6587\u5728\u4efb\u610f\u6b65\u9aa4\u629b\u5f02\u5e38\uff08\u4e0b\u8f7d\u5931\u8d25\u3001Notion API \u62a5\u9519\u3001LLM \u8d85\u65f6\u7b49\uff09\uff0c`_process_paper` \u8fd4\u56de `False`\uff0c`fail_count += 1`\uff0c\u7136\u540e `for` \u5faa\u73af\u76f4\u63a5\u8fdb\u5165\u4e0b\u4e00\u7bc7 (`continue`)\u2014\u2014\u4e0d\u4f1a `break`\u3002\n   - \u6240\u6709\u8bba\u6587\u90fd\u5904\u7406\u5b8c\u540e\uff0c\u7ec8\u7aef\u6253\u5370\u6c47\u603b Panel\uff1a\u6210\u529f X \u7bc7\uff0c\u5931\u8d25 Y \u7bc7\uff0c\u5171 Z \u7bc7\u3002\n   - \u5982\u679c\u6709\u5931\u8d25\uff0c\u547d\u4ee4\u4ee5 exit code 1 \u9000\u51fa\uff0c\u65b9\u4fbf\u4f60\u5728\u811a\u672c\u91cc\u5224\u65ad\u3002\n\n## \u989d\u5916\u53ef\u52a0\u7684\u53c2\u6570\n\n| \u53c2\u6570 | \u4f5c\u7528 |\n|------|------|\n| `--skip-llm` | \u53ea\u5b58\u5143\u6570\u636e\u5230 Notion\uff0c\u8df3\u8fc7 LLM \u5206\u6790\u3002\u5982\u679c\u53ea\u662f\u5148\u5360\u5751\u5bfc\u5165\uff0c\u540e\u7eed\u518d\u9010\u4e2a\u8dd1\u5206\u6790\uff0c\u53ef\u4ee5\u7528\u8fd9\u4e2a\u5927\u5e45\u52a0\u901f\u3002 |\n| `--force` | \u5982\u679c Notion \u4e2d\u5df2\u5b58\u5728\u540c URL \u7684\u8bba\u6587\u9875\u9762\uff0c\u5f52\u6863\u65e7\u9875\u9762\u540e\u91cd\u65b0\u5bfc\u5165\u3002 |\n| `--debug` | \u6253\u5370 LLM \u7684\u539f\u59cb prompt \u548c\u56de\u5305\uff0c\u65b9\u4fbf\u6392\u67e5\u5206\u7c7b/\u7b14\u8bb0\u8d28\u91cf\u95ee\u9898\u3002 |\n| `--stream` | \u5728\u7ec8\u7aef\u5c0f\u7a97\u53e3\u5b9e\u65f6\u663e\u793a LLM \u6d41\u5f0f\u8f93\u51fa\uff0c\u9002\u5408\u89c2\u5bdf\u751f\u6210\u8d28\u91cf\u4f46\u9700\u8981\u4e92\u52a8\u786e\u8ba4\u7684\u573a\u666f\u3002 |\n\n## \u5982\u679c\u4f60\u60f3\u8981\u66f4\u591a\u63a7\u5236\uff08\u7f16\u7a0b\u65b9\u5f0f\uff09\n\nCLI \u7684 batch \u5e95\u5c42\u5c31\u662f `for url in urls: try...except...continue`\u3002\u4f60\u4e5f\u53ef\u4ee5\u7528 Python \u811a\u672c\u66f4\u7cbe\u7ec6\u5730\u63a7\u5236\uff0c\u6bd4\u5982\uff1a\n\n```python\nfrom paper_tool.config import PipelineContext\nfrom paper_tool.pipeline import download_paper, extract_paper_text, run_pipeline\n\nctx = PipelineContext.from_config()\n\nurls = extract_urls_from_markdown(\"your_file.md\")  # \u81ea\u5df1\u5b9e\u73b0\u6216\u7528 CLI \u7684 _extract_urls\n\nsuccess_count = 0\nfailures = []\n\nfor url in urls:\n    try:\n        run_pipeline(url)\n        success_count += 1\n    except Exception as e:\n        failures.append((url, str(e)))\n        continue\n\nprint(f\"\u6210\u529f: {success_count}, \u5931\u8d25: {len(failures)}\")\nfor url, err in failures:\n    print(f\"  FAILED: {url} \u2014 {err}\")\n```\n\n\u4f46\u5bf9\u4e8e\u4f60\u7684\u573a\u666f\uff0c\u76f4\u63a5\u7528 `batch --continue-on-error` \u5c31\u8db3\u591f\u4e86\uff0c\u4e0d\u9700\u8981\u591a\u5199\u4ee3\u7801\u3002\n"}], "grading": {"expectations": [{"text": "Mentions iterating over URLs in a loop or batch processing pattern", "passed": true, "evidence": "Shows Python for loop: for url in urls: try...except...continue, collecting successes and failures"}, {"text": "Recommends try/except per paper for resilience (equivalent to --continue-on-error)", "passed": true, "evidence": "Shows try/except Exception as e pattern inside the loop, failures.append((url, str(e))), continue"}, {"text": "Explains how to re-run or debug individual failures", "passed": true, "evidence": "Collects failures list, prints FAILED: url \u2014 err at the end, and mentions the CLI --continue-on-error prints per-paper errors"}, {"text": "References the batch workflow from the skill or shows composable step functions", "passed": true, "evidence": "Imports PipelineContext.from_config(), download_paper, extract_paper_text, run_pipeline from paper_tool modules"}]}}, {"id": "eval-3-batch-import-without_skill", "prompt": "\u6211\u6709\u4e00\u4e2amarkdown\u6587\u4ef6\u91cc\u9762\u670920\u7bc7\u8bba\u6587\u94fe\u63a5\uff0c\u60f3\u5168\u90e8\u5bfc\u5165Notion\u3002\u4f46\u6709\u4e9b\u53ef\u80fd\u4f1a\u5931\u8d25\uff0c\u6211\u4e0d\u60f3\u534a\u8def\u505c\u4e0b\u6765\u3002", "eval_id": 3, "outputs": [{"name": "response.md", "type": "text", "content": "# \u6279\u91cf\u5bfc\u5165 20 \u7bc7\u8bba\u6587\uff0c\u5931\u8d25\u4e0d\u4e2d\u65ad\n\npaper-tool \u7684 `batch` \u547d\u4ee4\u5df2\u7ecf\u5185\u7f6e\u4e86\u4f60\u9700\u8981\u7684\u529f\u80fd\u3002\u4f60\u53ea\u9700\u8981\u4e00\u4e2a flag\uff1a\n\n```bash\nuv run paper-tool batch papers.md --continue-on-error --force\n```\n\n\u5173\u952e\u53c2\u6570\u8bf4\u660e\uff1a\n\n- `batch papers.md` \u2014 \u81ea\u52a8\u4ece markdown \u6587\u4ef6\u91cc\u63d0\u53d6\u6240\u6709 URL\uff08\u4e5f\u652f\u6301 txt\u3001csv \u7b49\u683c\u5f0f\uff09\u3002\n- `--continue-on-error` \u2014 \u9047\u5230\u67d0\u7bc7\u5931\u8d25\u65f6\u4e0d\u4e2d\u6b62\uff0c\u7ee7\u7eed\u5904\u7406\u4e0b\u4e00\u7bc7\u3002\u9ed8\u8ba4\u884c\u4e3a\uff08`--stop-on-error`\uff09\u662f\u5931\u8d25\u5c31\u505c\u3002\n- `--force` \u2014 \u5982\u679c Notion \u91cc\u5df2\u7ecf\u5b58\u5728\u540c\u540d URL \u7684\u9875\u9762\uff0c\u4f1a\u5f52\u6863\u65e7\u7684\u7136\u540e\u91cd\u65b0\u5bfc\u5165\u3002\u5982\u679c\u7b2c\u4e00\u6b21\u8dd1\u4e2d\u9014\u65ad\u6389\u4e86\uff0c\u7b2c\u4e8c\u6b21\u8dd1\u4e0d\u4f1a\u56e0\u4e3a\"\u5df2\u5b58\u5728\"\u800c\u62a5\u9519\u3002\n\n`papers.md` \u91cc\u94fe\u63a5\u7684\u683c\u5f0f\u65e0\u6240\u8c13\uff08\u666e\u901a URL\u3001`[title](url)` markdown \u94fe\u63a5\u3001\u88f8\u94fe\u63a5\u90fd\u53ef\u4ee5\uff09\uff0c`batch` \u4f1a\u81ea\u52a8\u63d0\u53d6\u3002\n\n\u8dd1\u5b8c\u4e4b\u540e\u4f1a\u6253\u5370\u6c47\u603b\u7ed3\u679c\uff1a\n\n```\n\u6210\u529f: 18  \u5931\u8d25: 2  \u5171: 20\n```\n\n\u6ce8\u610f\uff1a\u5373\u4fbf\u5f00\u4e86 `--continue-on-error`\uff0c\u6700\u7ec8\u7684 exit code \u5728\u6709\u5931\u8d25\u7684\u60c5\u51b5\u4e0b\u4ecd\u7136\u662f 1\uff08\u975e\u96f6\uff09\uff0c\u65b9\u4fbf\u4f60\u5728\u811a\u672c\u91cc\u5224\u65ad\u3002\u5931\u8d25\u7684\u90a3\u51e0\u7bc7\u4f60\u770b\u8f93\u51fa\u7684\u9519\u8bef\u4fe1\u606f\u5355\u72ec\u6392\u67e5\u5373\u53ef\u3002\n"}], "grading": {"expectations": [{"text": "Mentions iterating over URLs in a loop or batch processing pattern", "passed": false, "evidence": "Only shows the monolithic CLI batch command; no loop or iteration pattern"}, {"text": "Recommends try/except per paper for resilience (equivalent to --continue-on-error)", "passed": false, "evidence": "Only mentions --continue-on-error CLI flag; no try/except or programmatic error handling"}, {"text": "Explains how to re-run or debug individual failures", "passed": false, "evidence": "Only says '\u770b\u8f93\u51fa\u7684\u9519\u8bef\u4fe1\u606f\u5355\u72ec\u6392\u67e5\u5373\u53ef' without explaining re-run mechanics or debugging approach"}, {"text": "References the batch workflow from the skill or shows composable step functions", "passed": false, "evidence": "No Python imports, no composable functions, no skill references"}]}}], "previous_feedback": {}, "previous_outputs": {"eval-1-paper-add-with_skill": [{"name": "response.md", "type": "text", "content": "# Response\n\n\u4f60\u53ef\u4ee5\u8fd0\u884c\u4ee5\u4e0b\u547d\u4ee4\u5c06\u8fd9\u7bc7\u8bba\u6587\u6dfb\u52a0\u5230 Notion\uff1a\n\n```bash\nuv run paper-tool add https://arxiv.org/abs/2301.12345\n```\n\n\u8fd9\u4e2a\u547d\u4ee4\u4f1a\u89e6\u53d1\u5b8c\u6574\u7684\u81ea\u52a8\u5316\u6d41\u6c34\u7ebf\uff1a\n\n1. **PDF/LaTeX \u4e0b\u8f7d** \u2014 \u4ece arXiv \u62c9\u53d6\u8bba\u6587\u6e90\u6587\u4ef6\u3002\n2. **\u6587\u672c\u63d0\u53d6** \u2014 \u89e3\u6790 PDF \u6216 LaTeX \u6e90\u7801\uff0c\u63d0\u53d6\u6b63\u6587\u3001\u56fe\u8868\u7b49\u7ed3\u6784\u5316\u5185\u5bb9\u3002\n3. **\u56fe\u8868\u6e32\u67d3** \u2014 \u5c06\u8bba\u6587\u4e2d\u7684 figures \u548c tables \u6e32\u67d3\u4e3a\u56fe\u7247\u3002\n4. **LLM \u5206\u6790** \u2014 \u8c03\u7528\u5927\u6a21\u578b\u751f\u6210 AI \u9605\u8bfb\u7b14\u8bb0\uff08\u6458\u8981\u3001\u65b9\u6cd5\u3001\u8d21\u732e\u3001\u4f18\u7f3a\u70b9\u7b49\uff09\u3002\n5. **\u5199\u5165 Notion** \u2014 \u5c06\u89e3\u6790\u7ed3\u679c\u548c LLM \u7b14\u8bb0\u5199\u5165\u4f60\u7684 Notion \u6570\u636e\u5e93\uff0c\u751f\u6210\u4e00\u9875\u9605\u8bfb\u7b14\u8bb0\u3002\n\n**\u5e38\u7528 flag\uff1a**\n\n- \u5982\u679c\u9047\u5230\u95ee\u9898\u60f3\u770b\u539f\u59cb LLM \u8f93\u5165\u8f93\u51fa\uff0c\u52a0\u4e0a `--debug`\uff1a\n  ```bash\n  uv run paper-tool add --debug https://arxiv.org/abs/2301.12345\n  ```\n\n- \u5982\u679c\u4f60\u53ea\u60f3\u624b\u52a8\u8bb0\u7b14\u8bb0\u3001\u4e0d\u9700\u8981 AI \u751f\u6210\uff0c\u53ef\u4ee5\u8df3\u8fc7 LLM\uff1a\n  ```bash\n  uv run paper-tool add --skip-llm https://arxiv.org/abs/2301.12345\n  ```\n\n**\u5982\u679c LaTeX \u6e32\u67d3\u5931\u8d25\uff1a**\n\n\u7ec8\u7aef\u8f93\u51fa\u4f1a\u663e\u793a\u6e32\u67d3\u540e\u7aef\u662f `latex`\u3001`matplotlib` \u8fd8\u662f `cached`\u3002\u5931\u8d25\u65f6\u53bb `papers/<paper_dir>/debug/` \u76ee\u5f55\u67e5\u770b `.tex`\u3001`.log`\u3001`.stdout`\u3001`.stderr` \u6587\u4ef6\u5b9a\u4f4d\u95ee\u9898\u3002\u5e38\u89c1\u539f\u56e0\u5305\u62ec\u7f3a\u5931\u5b8f\u5b9a\u4e49\u3001resizebox \u5305\u88f9\u95ee\u9898\u3001\u5b57\u4f53\u7f3a\u5931\u3001pgfplotstable \u627e\u4e0d\u5230\u6570\u636e\u3001TikZ \u8fb9\u6846\u78b0\u89e6\u7b49\u3002\u4fee\u590d\u540e\u7528 `--force` \u91cd\u65b0\u5bfc\u5165\uff1a\n\n```bash\nuv run paper-tool add https://arxiv.org/abs/2301.12345 --force\n```\n\n**\u6210\u529f\u4e4b\u540e**\uff0cNotion \u9875\u9762 URL \u4f1a\u6253\u5370\u5728\u7ec8\u7aef\u8f93\u51fa\u4e2d\uff0c\u76f4\u63a5\u5206\u4eab\u5373\u53ef\u3002\n"}], "eval-1-paper-add-without_skill": [{"name": "response.md", "type": "text", "content": "# Adding paper to Notion: https://arxiv.org/abs/2301.12345\n\n## Result\n\nThe paper was successfully added to Notion. Here is a summary of what happened:\n\n### Paper Details\n\n- **Title**: Chemotactic motility-induced phase separation\n- **arXiv ID**: 2301.12345\n- **Classification**: ActiveMatter, Princeton University\n- **Notion Page**: https://www.notion.so/36cc9e7443d5816fa583e59a9fae5783\n\n### Pipeline Steps (all completed successfully)\n\n1. **Metadata fetch**: Retrieved paper metadata from arXiv\n2. **Duplicate check**: Confirmed the paper was not already in Notion\n3. **PDF download**: Downloaded and saved the PDF\n4. **LaTeX source download**: Parsed 57,454 characters of LaTeX source\n5. **Figure extraction**: Found 8 figures\n6. **Table extraction**: Found 1 table\n7. **Notion page creation**: Created the Notion page\n8. **LLM classification**: Classified as ActiveMatter (research field) and Princeton University (institution)\n9. **One-sentence summary**: Generated and wrote a Chinese summary\n10. **Figure caption translation**: Translated all figure captions\n11. **Table caption translation**: Translated all table captions\n12. **LLM note generation**: Generated full reading notes using kimi-k2.5 (4,539 characters)\n13. **Notion write**: Wrote all notes and uploaded 9/9 figures and tables to Notion\n\n### How I Ran It\n\nThe command used was:\n\n```bash\nuv run paper-tool add https://arxiv.org/abs/2301.12345\n```\n\nThis is the standard CLI command for the paper-tool project. The tool automatically:\n- Resolves the arXiv URL\n- Downloads the PDF and LaTeX source\n- Extracts and renders figures and tables\n- Uses LLM (kimi-k2.5) to classify, summarize, and generate notes\n- Writes everything to the configured Notion database\n\n### Elapsed Time\n\nApproximately 12 minutes from start to finish (15:39:34 to 15:51:54).\n"}], "eval-2-latex-debug-with_skill": [{"name": "response.md", "type": "text", "content": "# LaTeX \u8868\u683c\u6e32\u67d3\u8c03\u8bd5\u6307\u5357\n\n\u8868\u683c\u663e\u793a\u4e3a matplotlib \u964d\u7ea7\u7248\u672c\uff0c\u8bf4\u660e `table_extractor.py` \u4e2d\u7684 LaTeX \u7f16\u8bd1\u5931\u8d25\u4e86\uff0c\u89e6\u53d1\u4e86\u56de\u9000\uff08fallback\uff09\u903b\u8f91\u3002\u4ee5\u4e0b\u662f\u5b8c\u6574\u7684\u8c03\u8bd5\u5de5\u4f5c\u6d41\u3002\n\n## \u7b2c 1 \u6b65\uff1a\u786e\u8ba4\u6e32\u67d3\u540e\u7aef\n\n\u89c2\u5bdf\u7ec8\u7aef\u8f93\u51fa\uff0c\u6216\u8005\u68c0\u67e5 `papers/<paper_dir>/debug/` \u76ee\u5f55\u4e0b\u7684 JSON \u72b6\u6001\u6587\u4ef6\u3002\u6bcf\u4e2a\u8868\u683c\u4f1a\u6709\u4e00\u4e2a `table_NN.json`\uff0c\u5176\u4e2d\u7684 `\"renderer\"` \u5b57\u6bb5\u4f1a\u6807\u660e\u540e\u7aef\uff1a\n\n- `\"latex\"` \u2014 LaTeX \u7f16\u8bd1\u6210\u529f\n- `\"matplotlib\"` \u2014 LaTeX \u5931\u8d25\uff0c\u964d\u7ea7\u4e3a matplotlib\n- `\"cached\"` \u2014 \u547d\u4e2d\u7f13\u5b58\uff0c\u76f4\u63a5\u4f7f\u7528\u4e86\u4e4b\u524d\u6e32\u67d3\u7684\u7ed3\u679c\n- `\"\"` (\u7a7a) \u2014 \u5c1a\u672a\u6e32\u67d3\n\n## \u7b2c 2 \u6b65\uff1a\u68c0\u67e5\u8c03\u8bd5\u4ea7\u7269\n\n\u8fdb\u5165\u8bba\u6587\u7684 debug \u76ee\u5f55\uff1a\n\n```\npapers/<paper_dir>/debug/\n\u251c\u2500\u2500 table_01.latex.tex       # \u5b9e\u9645\u7f16\u8bd1\u7684 standalone LaTeX \u6e90\u7801\n\u251c\u2500\u2500 table_01.latex.log        # pdflatex \u7f16\u8bd1\u65e5\u5fd7\uff08\u5173\u952e\uff01\uff09\n\u251c\u2500\u2500 table_01.latex.stdout.txt # pdflatex stdout\n\u251c\u2500\u2500 table_01.latex.stderr.txt # pdflatex stderr\n\u251c\u2500\u2500 table_01.json             # \u6e32\u67d3\u72b6\u6001\uff08renderer, caption, label \u7b49\uff09\n\u2514\u2500\u2500 ...\n```\n\n\u91cd\u70b9\u5173\u6ce8 `.latex.log` \u6587\u4ef6\uff0c\u5176\u4e2d\u8bb0\u5f55\u4e86\u7f16\u8bd1\u5931\u8d25\u7684\u6839\u672c\u539f\u56e0\u3002\n\n## \u7b2c 3 \u6b65\uff1a\u9694\u79bb\u590d\u73b0\n\n\u7528 debug \u811a\u672c\u5728\u72ec\u7acb\u73af\u5883\u4e2d\u590d\u73b0\u8be5\u8868\u683c\u7684\u7f16\u8bd1\u8fc7\u7a0b\uff1a\n\n```bash\nbash .claude/skills/paper-reading-workflow/scripts/debug-table.sh \\\n  papers/<paper_dir>/paper.tex <table_index>\n```\n\n\u5176\u4e2d `<table_index>` \u4ece 0 \u5f00\u59cb\u8ba1\u6570\uff08\u7b2c 0 \u4e2a\u8868\u683c = \u8bba\u6587\u7684\u7b2c 1 \u4e2a\u8868\u683c\uff09\u3002\u811a\u672c\u4f1a\uff1a\n\n1. \u63d0\u53d6 merged `paper.tex` \u4e2d\u7b2c N \u4e2a table \u73af\u5883\n2. \u6ce8\u5165 preamble \u4e2d\u7684 `\\newcommand`\u3001`\\definecolor`\u3001`\\newcolumntype` \u7b49\u5b8f\n3. \u6ce8\u5165 `\\begin{document}` \u4e4b\u540e\u3001\u8be5\u8868\u683c\u4e4b\u524d\u7684 body \u5c42\u5b8f\u5b9a\u4e49\uff08`\\def`\u3001`\\tikzset`\u3001`\\pgfplotsset` \u7b49\uff09\n4. \u5265\u79bb `\\resizebox`/`\\scalebox`/`\\adjustbox` \u5305\u88c5\uff08`standalone` \u6587\u6863\u7c7b\u4e0d\u652f\u6301\u8fd9\u4e9b\uff09\n5. \u751f\u6210 standalone LaTeX \u6587\u6863\u5e76\u7f16\u8bd1\n6. \u8f93\u51fa\u7f16\u8bd1\u65e5\u5fd7\u548c PNG\n\n\u8f93\u51fa\u6587\u4ef6\u9ed8\u8ba4\u5199\u5165 `/tmp/debug-table/`\uff0c\u5305\u542b\uff1a\n- `table.tex` \u2014 standalone LaTeX \u6587\u6863\n- `table.stdout` / `table.stderr` \u2014 pdflatex \u8f93\u51fa\n- `table.log` \u2014 \u7f16\u8bd1\u65e5\u5fd7\n- `table.png` \u2014 \u6210\u529f\u7f16\u8bd1\u540e\u7684 PNG\n\n\u811a\u672c\u4f1a\u76f4\u63a5\u8f93\u51fa\u5173\u952e\u9519\u8bef\u6458\u8981\uff08grep `^!|Error|Warning`\uff09\uff0c\u53ef\u4ee5\u5feb\u901f\u5b9a\u4f4d\u95ee\u9898\u3002\n\n## \u7b2c 4 \u6b65\uff1a\u5206\u6790\u7f16\u8bd1\u65e5\u5fd7\u4e2d\u7684\u9519\u8bef\n\n\u6253\u5f00 `debug/<table>.latex.log` \u6216 debug \u811a\u672c\u751f\u6210\u7684 `table.log`\uff0c\u641c\u7d22\u4ee5\u4e0b\u5173\u952e\u8bcd\uff1a\n\n| \u9519\u8bef\u6a21\u5f0f | \u542b\u4e49 | \u5e38\u89c1\u539f\u56e0 |\n|---------|------|---------|\n| `! Undefined control sequence` | \u5b8f\u672a\u5b9a\u4e49 | `\\newcommand` \u5b9a\u4e49\u5728 body \u4e2d\uff08preamble \u4e4b\u524d\u672a\u63d0\u53d6\u5230\uff09\u6216\u4f7f\u7528\u4e86\u672a\u7ecf stub \u7684 `\\renewcommand` |\n| `! LaTeX Error: File '...' not found` | \u6587\u4ef6\u7f3a\u5931 | \u7f3a\u5c11\u5b8f\u5305\u3001\u5b57\u4f53\u6587\u4ef6\uff0c\u6216 `\\pgfplotstableread` \u5f15\u7528\u7684 `.dat`/`.csv` \u6587\u4ef6\u8def\u5f84\u672a\u89e3\u6790 |\n| `! Extra alignment tab` | \u5217\u6570\u4e0d\u5339\u914d | tabular \u6e90\u7801\u7578\u5f62\uff08\u6781\u5c11\u89c1\uff0c\u5c5e\u4e8e\u6e90\u8bba\u6587\u683c\u5f0f\u9519\u8bef\uff09 |\n| `! Misplaced \\noalign` | booktabs \u547d\u4ee4\u4f4d\u7f6e\u9519\u8bef | `\\toprule`/`\\midrule`/`\\bottomrule` \u653e\u9519\u4e86\u4f4d\u7f6e |\n| `Warning: Font shape ... not available` | \u5b57\u4f53\u8b66\u544a | \u901a\u5e38\u65e0\u5bb3\uff0c\u4f46\u5982\u679c\u5bfc\u81f4\u7f3a\u5b57\uff0c\u9700\u8981\u5b89\u88c5\u5bf9\u5e94 texlive \u5305 |\n\n## \u7b2c 5 \u6b65\uff1a\u6309\u6839\u56e0\u5206\u7c7b\u4fee\u590d\n\n### \u60c5\u51b5 A\uff1aBody \u5185\u5b8f\u5b9a\u4e49\u672a\u88ab\u6ce8\u5165\n\n**\u75c7\u72b6**\uff1a`.log` \u4e2d\u51fa\u73b0 `! Undefined control sequence` \u6307\u5411\u67d0\u4e2a\u81ea\u5b9a\u4e49\u547d\u4ee4\uff08\u5982 `\\mytablenote`\uff09\uff0c\u8be5\u547d\u4ee4\u5728\u8bba\u6587 body \u4e2d\u7528 `\\newcommand` \u6216 `\\def` \u5b9a\u4e49\uff0c\u4f46 standalone \u7f16\u8bd1\u65f6\u627e\u4e0d\u5230\u3002\n\n**\u539f\u56e0**\uff1a`_extract_macros()` \u5728 body \u4e2d\u626b\u63cf\u4e86 `\\newcommand` / `\\def` / `\\newcolumntype` / `\\pgfplotsset` / `\\tikzset`\uff0c\u4f46\u53ef\u80fd\u9057\u6f0f\u4e86\u67d0\u4e9b\u5b8f\u7c7b\u578b\u3002\n\n**\u8c03\u8bd5\u65b9\u6cd5**\uff1a\u5728 `paper.tex` \u4e2d\u641c\u7d22 `\\begin{document}` \u5230\u76ee\u6807\u8868\u683c\u4e4b\u95f4\u7684\u81ea\u5b9a\u4e49\u5b8f\u5b9a\u4e49\uff1a\n```bash\n# \u641c\u7d22 body \u4e2d\u7684\u6240\u6709\u5b8f\u5b9a\u4e49\nawk '/\\\\begin\\{document\\}/,/\\\\begin\\{table\\}/' papers/<paper_dir>/paper.tex | \\\n  grep -oP '\\\\(newcommand|def|newcolumntype|pgfplotsset|tikzset|definecolor)\\{[^}]*\\}'\n```\n\n**\u4fee\u590d\u70b9**\uff1a\u5728 `src/paper_tool/figure_extractor.py` \u7684 `_extract_preamble_macros()` \u6216 `src/paper_tool/table_extractor.py` \u7684 `_extract_macros()` \u4e2d\u6dfb\u52a0\u9057\u6f0f\u7684\u5b8f\u7c7b\u578b\u3002\n\n\u53c2\u8003 commit `6f7707c`\uff08\u4fee\u590d body \u5185\u5b8f\u5b9a\u4e49\u672a\u88ab\u6ce8\u5165\u5bfc\u81f4\u8868\u683c LaTeX \u7f16\u8bd1\u964d\u7ea7\u5230 matplotlib\uff09\u3002\n\n### \u60c5\u51b5 B\uff1a`\\resizebox` \u5bfc\u81f4\u7a7a\u767d\u8f93\u51fa\n\n**\u75c7\u72b6**\uff1a`.log` \u4e2d\u65e0\u660e\u663e\u9519\u8bef\uff0c\u4f46\u7f16\u8bd1\u51fa\u7684 PDF \u662f\u7a7a\u767d\u7684\u6216\u8868\u683c\u88ab\u622a\u65ad\u3002\n\n**\u539f\u56e0**\uff1a`standalone` \u6587\u6863\u7c7b\u4e0d\u652f\u6301 `\\resizebox` \u7b49\u7f29\u653e\u5305\u88c5\u3002`_prepare_table_body` \u548c debug \u811a\u672c\u672c\u5e94\u5265\u79bb\u8fd9\u4e9b\u547d\u4ee4\uff0c\u4f46\u5982\u679c\u5305\u88c5\u53d8\u4f53\u672a\u88ab\u8986\u76d6\uff0c\u5c31\u4f1a\u5931\u8d25\u3002\n\n**\u4fee\u590d\u70b9**\uff1a\u5728 `_prepare_table_body()` \u6216 `_prepare_figure_body()` \u4e2d\u6dfb\u52a0\u9057\u6f0f\u7684\u5305\u88c5\u547d\u4ee4\u53d8\u4f53\u3002\n\n### \u60c5\u51b5 C\uff1apgfplotstable \u6570\u636e\u6587\u4ef6\u7f3a\u5931\n\n**\u75c7\u72b6**\uff1a`.log` \u4e2d\u51fa\u73b0 `! Package pgfplotstable Error: Could not read table file 'data.dat'`\u3002\n\n**\u539f\u56e0**\uff1a\u8bba\u6587\u4f7f\u7528\u4e86 `\\pgfplotstableread{data.dat}` \u4ece\u5916\u90e8\u6587\u4ef6\u8bfb\u53d6\u6570\u636e\uff0c`_inline_pgf_data()` \u672a\u80fd\u6b63\u786e\u89e3\u6790\u6587\u4ef6\u8def\u5f84\u3002\n\n**\u8c03\u8bd5\u65b9\u6cd5**\uff1a\n```bash\n# \u68c0\u67e5 source \u76ee\u5f55\u4e2d\u7684 .dat / .csv \u6587\u4ef6\nfind papers/<paper_dir>/source/ -name \"*.dat\" -o -name \"*.csv\"\n```\n\n**\u4fee\u590d\u70b9**\uff1a\u5728 `_inline_pgf_data()` \u4e2d\u6539\u8fdb\u8def\u5f84\u89e3\u6790\u903b\u8f91\u3002\n\n### \u60c5\u51b5 D\uff1aTikZ/PGFPlots \u56fe\u50cf\u89e6\u53ca\u8fb9\u6846\n\n**\u75c7\u72b6**\uff1a\u8868\u683c\u6e32\u67d3\u51fa\u6765\u4e86\u4f46\u5185\u5bb9\u88ab\u88c1\u526a\uff0c\u8fb9\u7f18\u88ab\u5207\u6389\u3002\n\n**\u539f\u56e0**\uff1a`_detect_textwidth()` \u8fd4\u56de\u7684 `\\textwidth` \u5bf9\u5f53\u524d\u6587\u6863\u7c7b\u4e0d\u51c6\u786e\uff0c\u5bfc\u81f4 standalone \u9875\u9762\u5bf9\u5e94\u5bbd\u5ea6\u4e0d\u6b63\u786e\u3002\n\n**\u4fee\u590d\u70b9**\uff1a\u5728 `_detect_textwidth()` \u7684\u542f\u53d1\u5f0f\u8868\uff08NeurIPS / ICLR / ICML / ACL / AAAI \u7b49\uff09\u4e2d\u6dfb\u52a0\u65b0\u6587\u6863\u7c7b\u3002\n\n## \u7b2c 6 \u6b65\uff1a\u9a8c\u8bc1\u4fee\u590d\n\n```bash\n# \u9488\u5bf9\u4fee\u590d\u540e\u7684\u8bba\u6587\uff0c\u5f3a\u5236\u91cd\u65b0\u6e32\u67d3\u6240\u6709\u8868\u683c\nuv run paper-tool add <url> --force --rerender-tables\n```\n\n## \u7b2c 7 \u6b65\uff1a\u56de\u5f52\u6d4b\u8bd5\n\n**\u4efb\u4f55\u89e3\u6790\u5668\u4fee\u6539\u90fd\u53ef\u80fd\u7834\u574f\u4e4b\u524d\u6b63\u5e38\u5de5\u4f5c\u7684\u8bba\u6587\u3002** \u4fee\u590d\u540e\u5fc5\u987b\u9a8c\u8bc1\u4ee5\u4e0b\u4e03\u79cd\u5178\u578b\u8868\u683c\u56de\u5f52\uff1a\n\n1. \u6807\u51c6 tabular \u8868\u683c\uff08\u6700\u57fa\u7840\uff0c\u6539\u52a8\u540e\u5fc5\u8fc7\uff09\n2. resizebox \u5305\u88c5\u7684\u8868\u683c\uff08\u6700\u5e38\u51fa\u95ee\u9898\uff09\n3. pgfplotstable \u8868\u683c\uff08\u6570\u636e\u6587\u4ef6\u8def\u5f84\u89e3\u6790\uff09\n4. \u591a\u5217\u8868\u683c\uff08multirow/multicolumn\uff09\n5. NeurIPS \u683c\u5f0f\u8868\u683c\uff08textwidth \u68c0\u6d4b\uff09\n6. ICLR/ICML/ACL \u683c\u5f0f\u8868\u683c\uff08\u4e0d\u540c\u6587\u6863\u7c7b\u7684 textwidth\uff09\n7. \u5e26 `\\newcommand`/`\\def` body \u5b8f\u7684\u8868\u683c\n\n\u5bf9\u6bcf\u4e2a\u53d7\u5f71\u54cd\u7684\u5df2\u77e5\u6b63\u5e38 URL \u8fd0\u884c\uff1a\n```bash\nuv run paper-tool add <known_good_url> --force --rerender-tables\n```\n\n\u786e\u4fdd\u6240\u6709\u4e4b\u524d\u80fd\u6b63\u5e38\u6e32\u67d3\u7684\u8868\u683c\u4ecd\u7136\u4f7f\u7528 `\"latex\"` \u540e\u7aef\uff08\u800c\u975e\u964d\u7ea7\u4e3a `\"matplotlib\"`\uff09\u3002\n\n## \u66f4\u591a\u53c2\u8003\n\n\u5b8c\u6574\u7684\u5386\u53f2\u5931\u8d25\u6a21\u5f0f\u76ee\u5f55\u548c\u4fee\u590d\u7b56\u7565\u89c1\uff1a\n`/home/sparidae/projects/paper-read-workflow/.claude/skills/paper-reading-workflow/reference/latex-failure-patterns.md`\n"}], "eval-2-latex-debug-without_skill": [{"name": "response.md", "type": "text", "content": "# \u8bba\u6587\u8868\u683c LaTeX \u6e32\u67d3\u5931\u8d25\u8c03\u8bd5\u6307\u5357\n\n## \u95ee\u9898\u80cc\u666f\n\n\u8868\u683c\u6e32\u67d3\u6709\u4e09\u7ea7\u964d\u7ea7\u94fe\uff1a\n\n```\npdflatex \u9996\u6b21\u7f16\u8bd1\uff08\u539f\u59cb body\uff09\n  -> \u5931\u8d25 -> pdflatex \u91cd\u8bd5\uff08\u5265\u79bb resizebox/scalebox/center\uff09\n    -> \u5931\u8d25 -> matplotlib \u515c\u5e95\u6e32\u67d3\uff08\u89e3\u6790 tabular \u884c\uff0cbooktabs \u98ce\u683c PNG\uff09\n```\n\n\u5f53\u770b\u5230 \"matplotlib \u964d\u7ea7\u7248\u672c\" \u65f6\uff0c\u8bf4\u660e\u524d\u4e24\u6b21 pdflatex \u7f16\u8bd1\u90fd\u5931\u8d25\u4e86\uff0c\u8d70\u5230\u4e86\u6700\u540e\u7684 matplotlib \u515c\u5e95\u8def\u5f84\u3002matplotlib \u7248\u672c\u786e\u5b9e\u6bd4\u8f83\u7c97\u7cd9\u2014\u2014\u7f3a\u5c11\u8bba\u6587\u539f\u6709\u7684\u989c\u8272\u3001\u5b57\u4f53\u6837\u5f0f\u3001\u884c\u8ddd\u7b49\u2014\u2014\u6240\u4ee5\u9700\u8981\u4fee\u590d LaTeX \u7f16\u8bd1\u8def\u5f84\u3002\n\n## \u7b2c\u4e00\u6b65\uff1a\u5b9a\u4f4d debug \u4ea7\u7269\n\n\u6bcf\u6b21\u6267\u884c `uv run paper-tool add <url>` \u540e\uff0c\u6e32\u67d3\u4ea7\u7269\u548c\u8c03\u8bd5\u6587\u4ef6\u5728\uff1a\n\n```\npapers/<paper_id>/debug/\n```\n\n\u5176\u4e2d\u6bcf\u4e2a\u8868\u683c\uff08\u548c\u56fe\u7247\uff09\u4f1a\u751f\u6210\u4e00\u7ec4\u6587\u4ef6\uff1a\n\n| \u6587\u4ef6 | \u8bf4\u660e |\n|------|------|\n| `table_XX.json` | \u6e32\u67d3\u7ed3\u679c\u5143\u6570\u636e\uff0c`renderer` \u5b57\u6bb5\u6807\u8bb0\u662f `latex` \u8fd8\u662f `matplotlib` |\n| `table_XX.latex.tex` | \u5b9e\u9645\u7f16\u8bd1\u7684 standalone LaTeX \u6e90\u7801 |\n| `table_XX.latex.log` | pdflatex \u5b8c\u6574\u7f16\u8bd1\u65e5\u5fd7 |\n| `table_XX.latex.stderr.txt` | pdflatex \u6807\u51c6\u9519\u8bef\u8f93\u51fa |\n| `table_XX.latex.stdout.txt` | pdflatex \u6807\u51c6\u8f93\u51fa |\n\n\u9996\u5148\u68c0\u67e5 `table_XX.json` \u786e\u8ba4\u54ea\u4e9b\u8868\u8d70\u4e86 matplotlib\uff1a\n\n```bash\ngrep -l '\"renderer\": \"matplotlib\"' papers/*/debug/table_*.json\n```\n\n## \u7b2c\u4e8c\u6b65\uff1a\u67e5\u770b LaTeX \u7f16\u8bd1\u9519\u8bef\n\n**\u6700\u76f4\u63a5\u7684\u65b9\u5f0f\uff1a\u770b `.log` \u6587\u4ef6\u672b\u5c3e\u7684\u9519\u8bef\u3002**\n\n```bash\n# \u67e5\u770b\u67d0\u4e2a\u8868\u683c\u7684 LaTeX \u7f16\u8bd1\u9519\u8bef\ngrep -E '^!|Error|Fatal' papers/<paper_id>/debug/table_XX.latex.log\n```\n\n\u4f8b\u5982\u672c\u9879\u76ee\u4e2d\u7684\u4e00\u4e2a\u771f\u5b9e\u6848\u4f8b\uff08C0RAL \u8bba\u6587 table_01\uff09\uff1a\n\n```\n! LaTeX Error: Missing \\begin{document}.\n...\nl.33 \\renewcommand{\\fnum@figure}\n                                {\\figurename~\\textcolor{violet}{\\thefigure}}\n```\n\n\u9519\u8bef\u539f\u56e0\uff1a\u8bba\u6587 preamble \u4e2d\u7684 `\\renewcommand{\\fnum@figure}{\\figurename~\\textcolor{violet}{\\thefigure}}` \u88ab\u63d0\u53d6\u4e3a preamble \u5b8f\u5e76\u6ce8\u5165\u4e86 standalone \u6a21\u677f\u7684 preamble \u533a\u57df\uff0c\u4f46 `\\textcolor` \u53ea\u80fd\u5728 `\\begin{document}` \u4e4b\u540e\u4f7f\u7528\u3002\u8fd9\u4f7f\u5f97 pdflatex \u5728\u5230\u8fbe `\\begin{document}` \u4e4b\u524d\u5c31\u62a5\u9519\u9000\u51fa\u3002\n\n## \u7b2c\u4e09\u6b65\uff1a\u68c0\u67e5 standalone LaTeX \u6e90\u7801\n\n\u6253\u5f00 `table_XX.latex.tex`\uff0c\u68c0\u67e5\u4ee5\u4e0b\u5e38\u89c1\u95ee\u9898\uff1a\n\n### 3a. Preamble \u5b8f\u5728 begin{document} \u4e4b\u524d\u6267\u884c\u4e86\u6392\u7248\u547d\u4ee4\n\n\u5982\u4e0a\u9762\u7684 `\\textcolor{violet}` \u6848\u4f8b\u3002`\\definecolor` \u662f\u5b89\u5168\u7684\uff0c\u4f46 `\\textcolor`\u3001`\\colorbox`\u3001`\\makebox` \u7b49\u6392\u7248\u547d\u4ee4\u51fa\u73b0\u5728 preamble \u4e2d\u5c31\u4f1a\u5bfc\u81f4 \"Missing \\begin{document}\" \u9519\u8bef\u3002\n\n**\u8bca\u65ad\u65b9\u6cd5**\uff1a\u68c0\u67e5 `@@PREAMBLE_MACROS@@` \u6ce8\u5165\u7684\u5b8f\u5b9a\u4e49\u4e2d\u662f\u5426\u5305\u542b `\\textcolor`\u3001`\\colorbox`\u3001`\\makebox`\u3001`\\framebox` \u7b49\u6392\u7248\u547d\u4ee4\u3002\n\n### 3b. \u8868\u683c body \u4e22\u5931\u4e86 tabular \u73af\u5883\n\n\u8fd9\u662f\u4e00\u4e2a\u66f4\u9690\u6666\u7684\u95ee\u9898\u3002\u770b C0RAL table_01 \u7684 `.latex.tex` \u7b2c 71-76 \u884c\uff1a\n\n```latex\n\\begin{document}\n\\begin{minipage}{\\textwidth}\n\\scriptsize\n\\setlength{\\tabcolsep}{3pt}\n\\end{minipage}\n\\end{document}\n```\n\n**table body \u91cc\u6ca1\u6709 tabular\uff01** \u53ea\u6709 `\\scriptsize` \u548c `\\setlength{\\tabcolsep}{3pt}`\u3002\u8fd9\u8bf4\u660e `_prepare_table_body_retry` \u4e2d\u5265\u79bb `\\resizebox` \u65f6\u628a\u5305\u88f9\u5728 resizebox \u91cc\u7684 tabular \u4e5f\u4e00\u8d77\u5e72\u6389\u4e86 \u2014\u2014 \u5f53 resizebox \u5305\u88f9\u4e86\u6574\u4e2a `{tabular}...` \u4e14\u53c2\u6570\u590d\u6742\u65f6\uff0c`_remove_command_calls` \u7684\u62ec\u53f7\u5e73\u8861\u89e3\u6790\u53ef\u80fd\u51fa\u9519\u3002\n\n**\u8bca\u65ad\u65b9\u6cd5**\uff1a\u5bf9\u6bd4\u539f\u59cb\u8bba\u6587 tex \u6587\u4ef6\u4e2d\u8be5 table \u7684 body \u548c debug \u4ea7\u7269\u4e2d\u7684 table body\uff0c\u786e\u8ba4 tabular \u73af\u5883\u662f\u5426\u88ab\u610f\u5916\u79fb\u9664\u3002\n\n### 3c. \u672a\u5b9a\u4e49\u7684\u547d\u4ee4\n\n\u8bba\u6587\u4e2d\u81ea\u5b9a\u4e49\u7684\u547d\u4ee4\uff08\u901a\u8fc7 `\\newcommand` \u5b9a\u4e49\uff09\u5982\u679c\u5728 standalone \u6a21\u677f\u4e2d\u6ca1\u6709\u5bf9\u5e94\u7684\u5b8f\u5305\u652f\u6301\uff0c\u4f1a\u7f16\u8bd1\u5931\u8d25\u3002`_extract_preamble_macros` \u4f1a\u81ea\u52a8\u63d0\u53d6 preamble \u4e2d\u6240\u6709 `\\newcommand`/`\\def`/`\\definecolor` \u7b49\u5b9a\u4e49\u5e76\u6ce8\u5165\uff0c\u4f46\u5982\u679c\u547d\u4ee4\u5b9a\u4e49\u5728 `\\begin{document}` \u4e4b\u540e\uff08\u5373 body \u4e2d\uff09\uff0c\u53ea\u6709\u7d27\u90bb\u8868\u683c\u4e4b\u524d\u7684\u5b9a\u4e49\u4f1a\u88ab\u63d0\u53d6\u3002\n\n**\u8bca\u65ad\u65b9\u6cd5**\uff1a\u641c\u7d22 log \u4e2d\u7684 `Undefined control sequence` \u9519\u8bef\uff1a\n\n```bash\ngrep 'Undefined control sequence' papers/<paper_id>/debug/table_XX.latex.log\n```\n\n\u627e\u5230\u672a\u5b9a\u4e49\u7684\u547d\u4ee4\u540e\uff0c\u68c0\u67e5\u8bba\u6587\u539f\u59cb tex \u4e2d\u8be5\u547d\u4ee4\u7684\u5b9a\u4e49\u4f4d\u7f6e\uff0c\u786e\u8ba4\u662f\u5426\u5728 preamble \u4e2d\u88ab\u6b63\u786e\u63d0\u53d6\u3002\n\n## \u7b2c\u56db\u6b65\uff1a\u91cd\u8dd1\u9a8c\u8bc1\n\n\u8c03\u8bd5\u65f6\u5efa\u8bae\u5728 `config.yaml` \u4e2d\u786e\u8ba4\u4ee5\u4e0b\u8bbe\u7f6e\uff1a\n\n```yaml\nllm:\n  rerender_tables: true    # \u5f3a\u5236\u91cd\u6e32\u67d3\uff0c\u4e0d\u8bfb\u53d6\u7f13\u5b58\n  rerender_figures: true\n```\n\n\u7136\u540e\u7528 `--skip-llm` \u8fd0\u884c\uff08\u8df3\u8fc7 LLM \u5206\u6790\u548c Notion \u4e0a\u4f20\uff0c\u53ea\u8dd1\u63d0\u53d6\u548c\u6e32\u67d3\uff09\uff1a\n\n```bash\nuv run paper-tool add <url> --skip-llm\n```\n\n\u8fd9\u4f1a\u91cd\u65b0\u6267\u884c\u6574\u4e2a\u63d0\u53d6+\u6e32\u67d3\u6d41\u7a0b\uff0c\u751f\u6210\u65b0\u7684 debug \u4ea7\u7269\u3002\u68c0\u67e5 `papers/<paper_id>/debug/` \u4e0b\u7684\u65b0\u6587\u4ef6\u3002\n\n## \u7b2c\u4e94\u6b65\uff1a\u4fee\u590d\u65b9\u5411\n\n\u6839\u636e root cause \u9009\u62e9\u4fee\u590d\u65b9\u5411\uff1a\n\n1. **Preamble \u5b8f\u4e2d\u6709\u6392\u7248\u547d\u4ee4**\uff08\u5982 `\\textcolor`\uff09\uff1a\u5728 `_extract_preamble_macros` \u6216 `_extract_macros` \u4e2d\u8fc7\u6ee4\u6389\u5305\u542b\u6392\u7248\u547d\u4ee4\u7684 `\\renewcommand` \u5b9a\u4e49\uff0c\u6216\u8005\u7528 `\\AtBeginDocument{...}` \u5305\u88f9\u5b83\u4eec\u3002\n\n2. **\u8868\u683c body \u4e22\u5931 tabular**\uff1a\u5728 `_remove_command_calls` \u6216 `_prepare_table_body_retry` \u4e2d\u4fee\u590d resizebox \u5265\u79bb\u903b\u8f91\uff0c\u786e\u4fdd\u53ea\u5265\u79bb\u5916\u5c42\u5305\u88f9\u547d\u4ee4\u800c\u4e0d\u7834\u574f\u5185\u90e8 tabular\u3002\n\n3. **\u672a\u5b9a\u4e49\u547d\u4ee4**\uff1a\u6392\u67e5\u662f\u5426\u6709 body \u4e2d\u5b9a\u4e49\u4f46 preamble \u4e2d\u672a\u5b9a\u4e49\u7684\u5b8f\uff1b\u68c0\u67e5 `_extract_renewcommand_stubs` \u662f\u5426\u4e3a\u8be5\u547d\u4ee4\u751f\u6210\u4e86\u6b63\u786e\u7684 stub\u3002\n\n## \u5feb\u901f\u8bca\u65ad\u547d\u4ee4\u6c47\u603b\n\n```bash\n# 1. \u627e\u54ea\u4e9b\u8868\u7528\u4e86 matplotlib\ngrep -l '\"renderer\": \"matplotlib\"' papers/*/debug/table_*.json\n\n# 2. \u770b\u5177\u4f53\u9519\u8bef\ngrep -E '^!|Error|Fatal|Undefined' papers/<paper_id>/debug/table_XX.latex.log\n\n# 3. \u63d0\u53d6\u539f\u59cb paper.tex \u4e2d\u7684\u8868\u683c body\uff08\u5bf9\u6bd4 debug \u4ea7\u7269\u770b\u6709\u6ca1\u6709\u4e22\u5931 tabular\uff09\ngrep -A 50 '\\\\begin{table}' papers/<paper_id>/paper.tex | head -80\n\n# 4. \u67e5\u770b standalone tex \u4e2d\u6ce8\u5165\u7684 preamble \u5b8f\nsed -n '/\\\\providecommand{\\\\fnum@figure}/,/\\\\begin{document}/p' \\\n  papers/<paper_id>/debug/table_XX.latex.tex\n\n# 5. \u91cd\u8dd1\uff08\u5f3a\u5236\u91cd\u6e32\u67d3\uff0c\u8df3\u8fc7 LLM\uff09\nuv run paper-tool add <url> --skip-llm\n```\n\n## \u6ce8\u610f\u4e8b\u9879\n\n- CLI \u7684 `--debug` \u6807\u5fd7\u662f\u7ed9 LLM prompt/response \u8c03\u8bd5\u7528\u7684\uff0c\u53ea\u6253\u5370 API \u8c03\u7528\u7684\u539f\u59cb prompt \u548c\u56de\u5305\u3002\u5b83**\u4e0d**\u5f71\u54cd LaTeX \u6e32\u67d3\u8c03\u8bd5\u8f93\u51fa\u2014\u2014debug \u4ea7\u7269\uff08`papers/*/debug/`\uff09\u59cb\u7ec8\u751f\u6210\u3002\n- `rerender_tables: true` \u53ea\u5f71\u54cd\u662f\u5426\u8df3\u8fc7\u5df2\u6709 PNG \u7f13\u5b58\uff0c\u4e0d\u5f71\u54cd debug \u4ea7\u7269\u7684\u5199\u5165\uff08\u65e0\u8bba\u7f13\u5b58\u547d\u4e2d\u4e0e\u5426\uff0cdebug JSON \u90fd\u4f1a\u66f4\u65b0\uff09\u3002\n- \u5982\u679c\u8bba\u6587\u4f7f\u7528 pgfplotstable\uff08\u7ea6 1% \u7684\u8bba\u6587\uff09\uff0c\u6ca1\u6709 matplotlib \u964d\u7ea7\u8def\u5f84\uff0cLaTeX \u7f16\u8bd1\u662f\u552f\u4e00\u8def\u7ebf\uff0c\u5fc5\u987b\u4fee\u597d\u3002\n"}], "eval-3-batch-import-with_skill": [{"name": "response.md", "type": "text", "content": "# Batch Import Papers to Notion\n\nYou can use the `batch` command with the `--continue-on-error` flag. This flag ensures the tool keeps processing all papers even when individual ones fail -- it will log the error and move on to the next paper instead of stopping.\n\n## Exact Command\n\n```bash\nuv run paper-tool batch <your-file.md> --continue-on-error\n```\n\nReplace `<your-file.md>` with the path to your markdown file. The file should contain one URL per line (lines starting with `#` are treated as comments and ignored).\n\n## What Happens on Failure\n\nWhen a single paper fails (e.g. a broken URL, a PDF that cannot be extracted, or an LLM call that times out), the tool will:\n\n1. Print a clear error message to stderr indicating which URL failed and why.\n2. Skip that paper and immediately continue to the next one.\n3. All successfully imported papers will still be written to Notion.\n\nAt the end of the run, you will see a summary showing how many papers succeeded and how many failed, along with the specific failed URLs.\n\n## How to Handle Failures Afterward\n\nFor each failed paper, re-run individually with the `--debug` flag to diagnose the root cause:\n\n```bash\nuv run paper-tool add --debug <failed-url>\n```\n\nThe `--debug` flag prints raw prompts and LLM responses, which is the quickest way to understand whether the problem is with the source PDF, the extraction pipeline, or the LLM classification step. Once you have fixed the issue (e.g. corrected a URL or adjusted a config), you can import it with the normal `add` command.\n"}], "eval-3-batch-import-without_skill": [{"name": "response.md", "type": "text", "content": "# Batch Import 20 Papers into Notion Without Stopping on Failures\n\n## Answer\n\n`paper-tool` \u7684 `batch` \u547d\u4ee4\u6b63\u597d\u652f\u6301\u4f60\u7684\u9700\u6c42\u3002\u5b83\u5185\u7f6e\u4e86 `--continue-on-error` \u9009\u9879\uff0c\u53ef\u4ee5\u8ba9\u4f60\u5728\u5355\u7bc7\u8bba\u6587\u5931\u8d25\u540e\u81ea\u52a8\u8df3\u8fc7\u3001\u7ee7\u7eed\u5904\u7406\u4e0b\u4e00\u7bc7\uff0c\u4e0d\u4f1a\u534a\u8def\u505c\u4e0b\u3002\n\n## Commands and Explanation\n\n```bash\nuv run paper-tool batch --continue-on-error <your_markdown.md>\n```\n\n### Key Details\n\n1. **\u6587\u4ef6\u683c\u5f0f\u652f\u6301**\uff1a`batch` \u547d\u4ee4\u652f\u6301 `txt`\u3001`csv`\u3001`md` \u7b49\u4efb\u610f\u6587\u672c\u683c\u5f0f\uff0c\u4f1a\u81ea\u52a8\u4ece\u6587\u4ef6\u5185\u5bb9\u4e2d\u63d0\u53d6\u8bba\u6587\u94fe\u63a5\uff08URL\uff09\uff0c\u6240\u4ee5\u4f60\u4e0d\u9700\u8981\u5bf9 markdown \u6587\u4ef6\u505a\u4efb\u4f55\u9884\u5904\u7406\u3002\n\n2. **`--continue-on-error`**\uff1a\u9ed8\u8ba4\u884c\u4e3a\u662f `--stop-on-error`\uff08\u9047\u5230\u4efb\u4f55\u9519\u8bef\u7acb\u5373\u505c\u6b62\uff09\u3002\u52a0\u4e0a `--continue-on-error` \u540e\uff0c\u5373\u4f7f\u67d0\u7bc7\u8bba\u6587\u6dfb\u52a0\u5931\u8d25\uff08\u4f8b\u5982\u4e0b\u8f7d PDF \u8d85\u65f6\u3001Notion API \u5199\u5165\u5931\u8d25\uff09\uff0c\u5de5\u5177\u4f1a\u8bb0\u5f55\u8be5\u7bc7\u5931\u8d25\uff0c\u7136\u540e\u81ea\u52a8\u7ee7\u7eed\u5904\u7406\u4e0b\u4e00\u7bc7\u3002\n\n3. **\u5b8c\u6210\u540e\u4f1a\u6253\u5370\u6c47\u603b\u9762\u677f**\uff08Panel\uff09\uff0c\u5c55\u793a\uff1a\n   - \u6210\u529f\uff1aN \u7bc7\n   - \u5931\u8d25\uff1aN \u7bc7\n   - \u5171\uff1aN \u7bc7\n\n   \u5931\u8d25\u7684\u8bba\u6587\u4e0d\u4f1a\u963b\u65ad\u6574\u4f53\u6d41\u7a0b\uff0c\u4f60\u53ef\u4ee5\u5728\u6700\u7ec8\u6c47\u603b\u4e2d\u770b\u5230\u54ea\u4e9b\u5904\u7406\u5931\u8d25\uff0c\u518d\u5355\u72ec\u6392\u67e5\u6216\u91cd\u8bd5\u3002\n\n### \u5176\u4ed6\u53ef\u9009\u53c2\u6570\n\n\u6839\u636e\u4f60\u7684\u5b9e\u9645\u9700\u6c42\uff0c\u53ef\u4ee5\u7ec4\u5408\u4ee5\u4e0b\u9009\u9879\uff1a\n\n| \u53c2\u6570 | \u4f5c\u7528 |\n|------|------|\n| `--skip-llm` | \u8df3\u8fc7 LLM \u5206\u6790\uff0c\u4ec5\u4e0b\u8f7d PDF \u548c\u5199\u5165 Notion\uff0c\u901f\u5ea6\u66f4\u5feb |\n| `--force` | \u82e5 Notion \u4e2d\u5df2\u5b58\u5728\u540c URL \u8bba\u6587\uff0c\u5148\u5f52\u6863\u65e7\u9875\u9762\u518d\u91cd\u65b0\u5bfc\u5165 |\n| `--debug` | \u6253\u5370 LLM \u539f\u59cb prompt \u548c\u56de\u5305\uff0c\u7528\u4e8e\u6392\u67e5\u5177\u4f53\u5931\u8d25\u539f\u56e0 |\n\n### \u793a\u4f8b\u5b8c\u6574\u547d\u4ee4\n\n```bash\nuv run paper-tool batch --continue-on-error --skip-llm papers.md\n```\n\n\u5982\u679c\u4f60\u60f3\u8ba9\u6bcf\u4e2a\u5931\u8d25\u7684\u8bba\u6587\u6709\u8be6\u7ec6\u65e5\u5fd7\u65b9\u4fbf\u4e8b\u540e\u6392\u67e5\uff1a\n\n```bash\nuv run paper-tool batch --continue-on-error --debug papers.md\n```\n\n### \u6279\u91cf\u5904\u7406\u5b8c\u6210\u540e\u7684\u6ce8\u610f\u4e8b\u9879\n\n`batch` \u547d\u4ee4\u7ed3\u675f\u540e\uff0c\u5982\u679c\u6709\u5931\u8d25\u9879\uff0c\u8fdb\u7a0b\u4f1a\u8fd4\u56de\u9000\u51fa\u7801 `1`\u3002\u4f60\u53ef\u4ee5\u6839\u636e\u7ec8\u7aef\u8f93\u51fa\u7684\u5931\u8d25\u8bba\u6587 URL \u5217\u8868\uff0c\u5355\u72ec\u7528 `uv run paper-tool add <url>` \u518d\u6b21\u5c1d\u8bd5\u3002\n"}]}, "benchmark": {"metadata": {"skill_name": "paper-reading-workflow", "skill_path": ".claude/skills/paper-reading-workflow", "executor_model": "claude-sonnet-4-6", "analyzer_model": "claude-sonnet-4-6", "timestamp": "2026-05-26T08:52:30Z", "evals_run": [1, 2, 3], "runs_per_configuration": 1}, "runs": [{"eval_id": 1, "eval_name": "paper-add", "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 4, "failed": 0, "total": 4, "time_seconds": 44.8, "tokens": 18431}, "expectations": [{"text": "References PipelineContext.from_config() or imports from paper_tool", "passed": true, "evidence": "Imports PipelineContext from paper_tool.config, download_paper/extract_paper_text from paper_tool.pipeline, LLMClassifier/LLMSummarizer/LLMAnalyzer from respective modules, NotionService from paper_tool.notion_service"}, {"text": "Mentions download_paper() or composable pipeline step functions", "passed": true, "evidence": "Shows both run_pipeline() shortcut and full 8-step composable workflow"}, {"text": "Explains what the pipeline does (download, extract, analyze, write to Notion)", "passed": true, "evidence": "Lists 8 numbered steps: download, extract text/figures, create Notion page, classify, summarize, translate captions, LLM analysis, write note with figures"}, {"text": "Response is actionable with importable/callable Python code", "passed": true, "evidence": "Provides complete copy-pasteable Python code with all necessary imports"}]}, {"eval_id": 1, "eval_name": "paper-add", "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.25, "passed": 1, "failed": 3, "total": 4, "time_seconds": 23.0, "tokens": 14078}, "expectations": [{"text": "References PipelineContext.from_config() or imports from paper_tool", "passed": false, "evidence": "Only shows CLI commands (uv run paper-tool add); no Python imports or PipelineContext usage"}, {"text": "Mentions download_paper() or composable pipeline step functions", "passed": false, "evidence": "Only references the monolithic paper-tool CLI, no composable function mentions"}, {"text": "Explains what the pipeline does (download, extract, analyze, write to Notion)", "passed": true, "evidence": "Lists 3 steps: download PDF, LLM analysis, write to Notion"}, {"text": "Response is actionable with importable/callable Python code", "passed": false, "evidence": "Only provides bash CLI commands, no Python code"}]}, {"eval_id": 2, "eval_name": "latex-debug", "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5, "time_seconds": 55.8, "tokens": 23637}, "expectations": [{"text": "Points to papers/<paper_dir>/debug/ for diagnostic artifacts", "passed": true, "evidence": "Lists tab_NNN.json, tab_NNN.tex, tab_NNN.log, tab_NNN.stdout/stderr in papers/<paper_dir>/debug/"}, {"text": "Mentions debug-table.sh script for isolation", "passed": true, "evidence": "Shows bash .claude/skills/paper-reading-workflow/scripts/debug-table.sh papers/<paper_dir>/paper.tex <table_index>"}, {"text": "References latex-failure-patterns.md or common failure patterns", "passed": true, "evidence": "References reference/latex-failure-patterns.md checklist and categorizes failures"}, {"text": "Explains re-import after fixing (--force --rerender-tables)", "passed": true, "evidence": "Shows uv run paper-tool add <paper_url> --force --rerender-tables --debug"}, {"text": "Mentions regression verification on previously-working papers", "passed": true, "evidence": "Explicitly says to re-run a previously-working paper with --force --rerender-tables"}]}, {"eval_id": 2, "eval_name": "latex-debug", "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.2, "passed": 1, "failed": 4, "total": 5, "time_seconds": 97.8, "tokens": 57104}, "expectations": [{"text": "Points to papers/<paper_dir>/debug/ for diagnostic artifacts", "passed": true, "evidence": "Lists table_XX.json, table_XX.latex.tex, table_XX.latex.log, table_XX.latex.stderr.txt with detailed descriptions"}, {"text": "Mentions debug-table.sh script for isolation", "passed": false, "evidence": "No mention of debug-table.sh anywhere in the response"}, {"text": "References latex-failure-patterns.md or common failure patterns", "passed": false, "evidence": "Lists failure patterns but never references latex-failure-patterns.md or the skill's reference docs"}, {"text": "Explains re-import after fixing (--force --rerender-tables)", "passed": false, "evidence": "Mentions rerender_tables in config.yaml but doesn't use --force or --rerender-tables CLI flags"}, {"text": "Mentions regression verification on previously-working papers", "passed": false, "evidence": "No mention of regression testing on previously-working papers"}]}, {"eval_id": 3, "eval_name": "batch-import", "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 4, "failed": 0, "total": 4, "time_seconds": 54.0, "tokens": 22795}, "expectations": [{"text": "Mentions iterating over URLs in a loop or batch processing pattern", "passed": true, "evidence": "Shows Python for loop: for url in urls: try...except...continue, collecting successes and failures"}, {"text": "Recommends try/except per paper for resilience (equivalent to --continue-on-error)", "passed": true, "evidence": "Shows try/except Exception as e pattern inside the loop, failures.append((url, str(e))), continue"}, {"text": "Explains how to re-run or debug individual failures", "passed": true, "evidence": "Collects failures list, prints FAILED: url \u2014 err at the end"}, {"text": "References the batch workflow from the skill or shows composable step functions", "passed": true, "evidence": "Imports PipelineContext.from_config(), download_paper, extract_paper_text, run_pipeline from paper_tool modules"}]}, {"eval_id": 3, "eval_name": "batch-import", "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.0, "passed": 0, "failed": 4, "total": 4, "time_seconds": 34.2, "tokens": 15980}, "expectations": [{"text": "Mentions iterating over URLs in a loop or batch processing pattern", "passed": false, "evidence": "Only shows the monolithic CLI batch command; no loop or iteration pattern"}, {"text": "Recommends try/except per paper for resilience (equivalent to --continue-on-error)", "passed": false, "evidence": "Only mentions --continue-on-error CLI flag; no try/except or programmatic error handling"}, {"text": "Explains how to re-run or debug individual failures", "passed": false, "evidence": "Only says '\u770b\u8f93\u51fa\u7684\u9519\u8bef\u4fe1\u606f\u5355\u72ec\u6392\u67e5\u5373\u53ef' without explaining re-run mechanics"}, {"text": "References the batch workflow from the skill or shows composable step functions", "passed": false, "evidence": "No Python imports, no composable functions, no skill references"}]}], "run_summary": {"with_skill": {"pass_rate": {"mean": 1.0, "stddev": 0.0, "min": 1.0, "max": 1.0}, "time_seconds": {"mean": 51.5, "stddev": 6.1, "min": 44.8, "max": 55.8}, "tokens": {"mean": 21621, "stddev": 2840, "min": 18431, "max": 23637}}, "without_skill": {"pass_rate": {"mean": 0.15, "stddev": 0.13, "min": 0.0, "max": 0.25}, "time_seconds": {"mean": 51.7, "stddev": 39.8, "min": 23.0, "max": 97.8}, "tokens": {"mean": 29054, "stddev": 24387, "min": 14078, "max": 57104}}, "delta": {"pass_rate": "+0.85", "time_seconds": "-0.1", "tokens": "-7433"}}}};
+
+    // ---- State ----
+    let feedbackMap = {};  // run_id -> feedback text
+    let currentIndex = 0;
+    let visitedRuns = new Set();
+
+    // ---- Init ----
+    async function init() {
+      // Load saved feedback from server — but only if this isn't a fresh
+      // iteration (indicated by previous_feedback being present). When
+      // previous feedback exists, the feedback.json on disk is stale from
+      // the prior iteration and should not pre-fill the textareas.
+      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
+        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
+      if (!hasPrevious) {
+        try {
+          const resp = await fetch("/api/feedback");
+          const data = await resp.json();
+          if (data.reviews) {
+            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+          }
+        } catch { /* first run, no feedback yet */ }
+      }
+
+      document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
+      showRun(0);
+
+      // Wire up feedback auto-save
+      const textarea = document.getElementById("feedback");
+      let saveTimeout = null;
+      textarea.addEventListener("input", () => {
+        clearTimeout(saveTimeout);
+        document.getElementById("feedback-status").textContent = "";
+        saveTimeout = setTimeout(() => saveCurrentFeedback(), 800);
+      });
+    }
+
+    // ---- Navigation ----
+    function navigate(delta) {
+      const newIndex = currentIndex + delta;
+      if (newIndex >= 0 && newIndex < EMBEDDED_DATA.runs.length) {
+        saveCurrentFeedback();
+        showRun(newIndex);
+      }
+    }
+
+    function updateNavButtons() {
+      document.getElementById("prev-btn").disabled = currentIndex === 0;
+      document.getElementById("next-btn").disabled =
+        currentIndex === EMBEDDED_DATA.runs.length - 1;
+    }
+
+    // ---- Show a run ----
+    function showRun(index) {
+      currentIndex = index;
+      const run = EMBEDDED_DATA.runs[index];
+
+      // Progress
+      document.getElementById("progress").textContent =
+        `${index + 1} of ${EMBEDDED_DATA.runs.length}`;
+
+      // Prompt
+      document.getElementById("prompt-text").textContent = run.prompt;
+
+      // Config badge
+      const badge = document.getElementById("config-badge");
+      const configMatch = run.id.match(/(with_skill|without_skill|new_skill|old_skill)/);
+      if (configMatch) {
+        const config = configMatch[1];
+        const isBaseline = config === "without_skill" || config === "old_skill";
+        badge.textContent = config.replace(/_/g, " ");
+        badge.className = "config-badge " + (isBaseline ? "config-baseline" : "config-primary");
+        badge.style.display = "inline-block";
+      } else {
+        badge.style.display = "none";
+      }
+
+      // Outputs
+      renderOutputs(run);
+
+      // Previous outputs
+      renderPrevOutputs(run);
+
+      // Grades
+      renderGrades(run);
+
+      // Previous feedback
+      const prevFb = (EMBEDDED_DATA.previous_feedback || {})[run.id];
+      const prevEl = document.getElementById("prev-feedback");
+      if (prevFb) {
+        document.getElementById("prev-feedback-text").textContent = prevFb;
+        prevEl.style.display = "block";
+      } else {
+        prevEl.style.display = "none";
+      }
+
+      // Feedback
+      document.getElementById("feedback").value = feedbackMap[run.id] || "";
+      document.getElementById("feedback-status").textContent = "";
+
+      updateNavButtons();
+
+      // Track visited runs and promote done button when all visited
+      visitedRuns.add(index);
+      const doneBtn = document.getElementById("done-btn");
+      if (visitedRuns.size >= EMBEDDED_DATA.runs.length) {
+        doneBtn.classList.add("ready");
+      }
+
+      // Scroll main content to top
+      document.querySelector(".main").scrollTop = 0;
+    }
+
+    // ---- Render outputs ----
+    function renderOutputs(run) {
+      const container = document.getElementById("outputs-body");
+      container.innerHTML = "";
+
+      const outputs = run.outputs || [];
+      if (outputs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No output files</div>';
+        return;
+      }
+
+      for (const file of outputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        // Always show file header with download link
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          content.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          content.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          content.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(content, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          content.appendChild(a);
+        } else if (file.type === "error") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          pre.style.color = "var(--red)";
+          content.appendChild(pre);
+        }
+
+        fileDiv.appendChild(content);
+        container.appendChild(fileDiv);
+      }
+    }
+
+    // ---- XLSX rendering via SheetJS ----
+    function renderXlsx(container, b64Data) {
+      try {
+        const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
+        const wb = XLSX.read(raw, { type: "array" });
+
+        for (let i = 0; i < wb.SheetNames.length; i++) {
+          const sheetName = wb.SheetNames[i];
+          const ws = wb.Sheets[sheetName];
+
+          if (wb.SheetNames.length > 1) {
+            const sheetLabel = document.createElement("div");
+            sheetLabel.style.cssText =
+              "font-weight:600; font-size:0.8rem; color:#b0aea5; margin-top:0.5rem; margin-bottom:0.25rem;";
+            sheetLabel.textContent = "Sheet: " + sheetName;
+            container.appendChild(sheetLabel);
+          }
+
+          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = htmlStr;
+          container.appendChild(wrapper);
+        }
+      } catch (err) {
+        container.textContent = "Error rendering spreadsheet: " + err.message;
+      }
+    }
+
+    // ---- Grades ----
+    function renderGrades(run) {
+      const section = document.getElementById("grades-section");
+      const content = document.getElementById("grades-content");
+
+      if (!run.grading) {
+        section.style.display = "none";
+        return;
+      }
+
+      const grading = run.grading;
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("grades-arrow").classList.remove("open");
+
+      const summary = grading.summary || {};
+      const expectations = grading.expectations || [];
+
+      let html = '<div style="padding: 1rem;">';
+
+      // Summary line
+      const passRate = summary.pass_rate != null
+        ? Math.round(summary.pass_rate * 100) + "%"
+        : "?";
+      const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
+      html += '<div class="grades-summary">';
+      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
+      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+      html += '</div>';
+
+      // Assertions list
+      html += '<ul class="assertion-list">';
+      for (const exp of expectations) {
+        const statusClass = exp.passed ? "pass" : "fail";
+        const statusIcon = exp.passed ? "\u2713" : "\u2717";
+        html += '<li class="assertion-item">';
+        html += '<span class="assertion-status ' + statusClass + '">' + statusIcon + '</span>';
+        html += '<span>' + escapeHtml(exp.text) + '</span>';
+        if (exp.evidence) {
+          html += '<div class="assertion-evidence">' + escapeHtml(exp.evidence) + '</div>';
+        }
+        html += '</li>';
+      }
+      html += '</ul>';
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function toggleGrades() {
+      const content = document.getElementById("grades-content");
+      const arrow = document.getElementById("grades-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Previous outputs (collapsible) ----
+    function renderPrevOutputs(run) {
+      const section = document.getElementById("prev-outputs-section");
+      const content = document.getElementById("prev-outputs-content");
+      const prevOutputs = (EMBEDDED_DATA.previous_outputs || {})[run.id];
+
+      if (!prevOutputs || prevOutputs.length === 0) {
+        section.style.display = "none";
+        return;
+      }
+
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("prev-outputs-arrow").classList.remove("open");
+
+      // Render the files into the content area
+      content.innerHTML = "";
+      const wrapper = document.createElement("div");
+      wrapper.style.padding = "1rem";
+
+      for (const file of prevOutputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const fc = document.createElement("div");
+        fc.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          fc.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          fc.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          fc.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(fc, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          fc.appendChild(a);
+        }
+
+        fileDiv.appendChild(fc);
+        wrapper.appendChild(fileDiv);
+      }
+
+      content.appendChild(wrapper);
+    }
+
+    function togglePrevOutputs() {
+      const content = document.getElementById("prev-outputs-content");
+      const arrow = document.getElementById("prev-outputs-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Feedback (saved to server -> feedback.json) ----
+    function saveCurrentFeedback() {
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // Build reviews array from map
+      const reviews = [];
+      for (const [run_id, feedback] of Object.entries(feedbackMap)) {
+        if (feedback.trim()) {
+          reviews.push({ run_id, feedback, timestamp: new Date().toISOString() });
+        }
+      }
+
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviews, status: "in_progress" }),
+      }).then(() => {
+        document.getElementById("feedback-status").textContent = "Saved";
+      }).catch(() => {
+        // Static mode or server unavailable — no-op on auto-save,
+        // feedback will be downloaded on final submit
+        document.getElementById("feedback-status").textContent = "Will download on submit";
+      });
+    }
+
+    // ---- Done ----
+    function showDoneDialog() {
+      // Save current textarea to feedbackMap (but don't POST yet)
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // POST once with status: complete — include ALL runs so the model
+      // can distinguish "no feedback" (looks good) from "not reviewed"
+      const reviews = [];
+      const ts = new Date().toISOString();
+      for (const r of EMBEDDED_DATA.runs) {
+        reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
+      }
+      const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }).then(() => {
+        document.getElementById("done-overlay").classList.add("visible");
+      }).catch(() => {
+        // Server not available (static mode) — download as file
+        const blob = new Blob([payload], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "feedback.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById("done-overlay").classList.add("visible");
+      });
+    }
+
+    function closeDoneDialog() {
+      // Reset status back to in_progress
+      saveCurrentFeedback();
+      document.getElementById("done-overlay").classList.remove("visible");
+    }
+
+    // ---- Toast ----
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      setTimeout(() => toast.classList.remove("visible"), 2000);
+    }
+
+    // ---- Keyboard nav ----
+    document.addEventListener("keydown", (e) => {
+      // Don't capture when typing in textarea
+      if (e.target.tagName === "TEXTAREA") return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        navigate(-1);
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        navigate(1);
+      }
+    });
+
+    // ---- Util ----
+    function getDownloadUri(file) {
+      if (file.data_uri) return file.data_uri;
+      if (file.data_b64) return "data:application/octet-stream;base64," + file.data_b64;
+      if (file.type === "text") return "data:text/plain;charset=utf-8," + encodeURIComponent(file.content);
+      return "#";
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ---- View switching ----
+    function switchView(view) {
+      document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+      document.querySelector(`[onclick="switchView('${view}')"]`).classList.add("active");
+      document.getElementById("panel-" + view).classList.add("active");
+    }
+
+    // ---- Benchmark rendering ----
+    function renderBenchmark() {
+      const data = EMBEDDED_DATA.benchmark;
+      if (!data) return;
+
+      // Show the tabs
+      document.getElementById("view-tabs").style.display = "flex";
+
+      const container = document.getElementById("benchmark-content");
+      const summary = data.run_summary || {};
+      const metadata = data.metadata || {};
+      const notes = data.notes || [];
+
+      let html = "";
+
+      // Header
+      html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
+      html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
+      if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
+      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
+      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
+      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+      html += "</p>";
+
+      // Summary table
+      html += '<table class="benchmark-table">';
+
+      function fmtStat(stat, pct) {
+        if (!stat) return "—";
+        const suffix = pct ? "%" : "";
+        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
+        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+        return m + suffix + " ± " + s + suffix;
+      }
+
+      function deltaClass(val) {
+        if (!val) return "";
+        const n = parseFloat(val);
+        if (n > 0) return "benchmark-delta-positive";
+        if (n < 0) return "benchmark-delta-negative";
+        return "";
+      }
+
+      // Discover config names dynamically (everything except "delta")
+      const configs = Object.keys(summary).filter(k => k !== "delta");
+      const configA = configs[0] || "config_a";
+      const configB = configs[1] || "config_b";
+      const labelA = configA.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const labelB = configB.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const a = summary[configA] || {};
+      const b = summary[configB] || {};
+      const delta = summary.delta || {};
+
+      html += "<thead><tr><th>Metric</th><th>" + escapeHtml(labelA) + "</th><th>" + escapeHtml(labelB) + "</th><th>Delta</th></tr></thead>";
+      html += "<tbody>";
+
+      html += "<tr><td><strong>Pass Rate</strong></td>";
+      html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
+      html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+
+      // Time (only show row if data exists)
+      if (a.time_seconds || b.time_seconds) {
+        html += "<tr><td><strong>Time (s)</strong></td>";
+        html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
+        html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+      }
+
+      // Tokens (only show row if data exists)
+      if (a.tokens || b.tokens) {
+        html += "<tr><td><strong>Tokens</strong></td>";
+        html += "<td>" + fmtStat(a.tokens, false) + "</td>";
+        html += "<td>" + fmtStat(b.tokens, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+      }
+
+      html += "</tbody></table>";
+
+      // Per-eval breakdown (if runs data available)
+      const runs = data.runs || [];
+      if (runs.length > 0) {
+        const evalIds = [...new Set(runs.map(r => r.eval_id))].sort((a, b) => a - b);
+
+        html += "<h3 style='font-family: Poppins, sans-serif; margin-bottom: 0.75rem;'>Per-Eval Breakdown</h3>";
+
+        const hasTime = runs.some(r => r.result && r.result.time_seconds != null);
+        const hasErrors = runs.some(r => r.result && r.result.errors > 0);
+
+        for (const evalId of evalIds) {
+          const evalRuns = runs.filter(r => r.eval_id === evalId);
+          const evalName = evalRuns[0] && evalRuns[0].eval_name ? evalRuns[0].eval_name : "Eval " + evalId;
+
+          html += "<h4 style='font-family: Poppins, sans-serif; margin: 1rem 0 0.5rem; color: var(--text);'>" + escapeHtml(evalName) + "</h4>";
+          html += '<table class="benchmark-table">';
+          html += "<thead><tr><th>Config</th><th>Run</th><th>Pass Rate</th>";
+          if (hasTime) html += "<th>Time (s)</th>";
+          if (hasErrors) html += "<th>Crashes During Execution</th>";
+          html += "</tr></thead>";
+          html += "<tbody>";
+
+          // Group by config and render with average rows
+          const configGroups = [...new Set(evalRuns.map(r => r.configuration))];
+          for (let ci = 0; ci < configGroups.length; ci++) {
+            const config = configGroups[ci];
+            const configRuns = evalRuns.filter(r => r.configuration === config);
+            if (configRuns.length === 0) continue;
+
+            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+            for (const run of configRuns) {
+              const r = run.result || {};
+              const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
+              html += '<tr class="' + rowClass + '">';
+              html += "<td>" + configLabel + "</td>";
+              html += "<td>" + run.run_number + "</td>";
+              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
+              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
+              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+              html += "</tr>";
+            }
+
+            // Average row
+            const rates = configRuns.map(r => (r.result || {}).pass_rate || 0);
+            const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+            const avgPrClass = avgRate >= 0.8 ? "benchmark-delta-positive" : avgRate < 0.5 ? "benchmark-delta-negative" : "";
+            html += '<tr class="benchmark-row-avg ' + rowClass + '">';
+            html += "<td>" + configLabel + "</td>";
+            html += "<td>Avg</td>";
+            html += '<td class="' + avgPrClass + '">' + (avgRate * 100).toFixed(0) + "%</td>";
+            if (hasTime) {
+              const times = configRuns.map(r => (r.result || {}).time_seconds).filter(t => t != null);
+              html += "<td>" + (times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : "—") + "</td>";
+            }
+            if (hasErrors) html += "<td></td>";
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+
+          // Per-assertion detail for this eval
+          const runsWithExpectations = {};
+          for (const config of configGroups) {
+            runsWithExpectations[config] = evalRuns.filter(r => r.configuration === config && r.expectations && r.expectations.length > 0);
+          }
+          const hasAnyExpectations = Object.values(runsWithExpectations).some(runs => runs.length > 0);
+          if (hasAnyExpectations) {
+            // Collect all unique assertion texts across all configs
+            const allAssertions = [];
+            const seen = new Set();
+            for (const config of configGroups) {
+              for (const run of runsWithExpectations[config]) {
+                for (const exp of (run.expectations || [])) {
+                  if (!seen.has(exp.text)) {
+                    seen.add(exp.text);
+                    allAssertions.push(exp.text);
+                  }
+                }
+              }
+            }
+
+            html += '<table class="benchmark-table" style="margin-top: 0.5rem;">';
+            html += "<thead><tr><th>Assertion</th>";
+            for (const config of configGroups) {
+              const label = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+              html += "<th>" + escapeHtml(label) + "</th>";
+            }
+            html += "</tr></thead><tbody>";
+
+            for (const assertionText of allAssertions) {
+              html += "<tr><td>" + escapeHtml(assertionText) + "</td>";
+
+              for (const config of configGroups) {
+                html += "<td>";
+                for (const run of runsWithExpectations[config]) {
+                  const exp = (run.expectations || []).find(e => e.text === assertionText);
+                  if (exp) {
+                    const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
+                    const icon = exp.passed ? "\u2713" : "\u2717";
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                  } else {
+                    html += "— ";
+                  }
+                }
+                html += "</td>";
+              }
+              html += "</tr>";
+            }
+            html += "</tbody></table>";
+          }
+        }
+      }
+
+      // Notes
+      if (notes.length > 0) {
+        html += '<div class="benchmark-notes">';
+        html += "<h3>Analysis Notes</h3>";
+        html += "<ul>";
+        for (const note of notes) {
+          html += "<li>" + escapeHtml(note) + "</li>";
+        }
+        html += "</ul></div>";
+      }
+
+      container.innerHTML = html;
+    }
+
+    // ---- Start ----
+    init();
+    renderBenchmark();
+  </script>
+</body>
+</html>

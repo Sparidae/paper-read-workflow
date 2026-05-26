@@ -1,0 +1,11 @@
+{
+  "eval_id": 3,
+  "eval_name": "batch-import",
+  "prompt": "我有一个markdown文件里面有20篇论文链接，想全部导入Notion。但有些可能会失败，我不想半路停下来。",
+  "assertions": [
+    "Mentions iterating over URLs in a loop or batch processing pattern",
+    "Recommends try/except per paper for resilience (equivalent to --continue-on-error)",
+    "Explains how to re-run or debug individual failures",
+    "References the batch workflow from the skill or shows composable step functions"
+  ]
+}

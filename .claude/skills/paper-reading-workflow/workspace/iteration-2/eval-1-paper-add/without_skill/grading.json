@@ -1,0 +1,24 @@
+{
+  "expectations": [
+    {
+      "text": "References PipelineContext.from_config() or imports from paper_tool",
+      "passed": false,
+      "evidence": "Only shows CLI commands (uv run paper-tool add); no Python imports or PipelineContext usage"
+    },
+    {
+      "text": "Mentions download_paper() or composable pipeline step functions",
+      "passed": false,
+      "evidence": "Only references the monolithic paper-tool CLI, no composable function mentions"
+    },
+    {
+      "text": "Explains what the pipeline does (download, extract, analyze, write to Notion)",
+      "passed": true,
+      "evidence": "Lists 3 steps: download PDF, LLM analysis, write to Notion"
+    },
+    {
+      "text": "Response is actionable with importable/callable Python code",
+      "passed": false,
+      "evidence": "Only provides bash CLI commands, no Python code"
+    }
+  ]
+}

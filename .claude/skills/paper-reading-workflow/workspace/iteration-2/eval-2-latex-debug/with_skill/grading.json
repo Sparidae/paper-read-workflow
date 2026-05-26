@@ -1,0 +1,29 @@
+{
+  "expectations": [
+    {
+      "text": "Points to papers/<paper_dir>/debug/ for diagnostic artifacts",
+      "passed": true,
+      "evidence": "Lists tab_NNN.json, tab_NNN.tex, tab_NNN.log, tab_NNN.stdout/stderr in papers/<paper_dir>/debug/"
+    },
+    {
+      "text": "Mentions debug-table.sh script for isolation",
+      "passed": true,
+      "evidence": "Shows bash .claude/skills/paper-reading-workflow/scripts/debug-table.sh papers/<paper_dir>/paper.tex <table_index>"
+    },
+    {
+      "text": "References latex-failure-patterns.md or common failure patterns",
+      "passed": true,
+      "evidence": "References reference/latex-failure-patterns.md checklist and categorizes failures (Undefined control sequence, File not found, Extra alignment tab, resizebox wrapping)"
+    },
+    {
+      "text": "Explains re-import after fixing (--force --rerender-tables)",
+      "passed": true,
+      "evidence": "Shows uv run paper-tool add <paper_url> --force --rerender-tables --debug"
+    },
+    {
+      "text": "Mentions regression verification on previously-working papers",
+      "passed": true,
+      "evidence": "Explicitly says to re-run a previously-working paper with --force --rerender-tables and check standard tabular, resizebox, pgfplotstable table types"
+    }
+  ]
+}

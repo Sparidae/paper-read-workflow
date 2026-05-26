@@ -1,0 +1,152 @@
+{
+  "metadata": {
+    "skill_name": "paper-reading-workflow",
+    "skill_path": ".claude/skills/paper-reading-workflow",
+    "executor_model": "claude-sonnet-4-6",
+    "analyzer_model": "claude-sonnet-4-6",
+    "timestamp": "2026-05-26T08:52:30Z",
+    "evals_run": [1, 2, 3],
+    "runs_per_configuration": 1
+  },
+  "runs": [
+    {
+      "eval_id": 1,
+      "eval_name": "paper-add",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 44.8,
+        "tokens": 18431
+      },
+      "expectations": [
+        {"text": "References PipelineContext.from_config() or imports from paper_tool", "passed": true, "evidence": "Imports PipelineContext from paper_tool.config, download_paper/extract_paper_text from paper_tool.pipeline, LLMClassifier/LLMSummarizer/LLMAnalyzer from respective modules, NotionService from paper_tool.notion_service"},
+        {"text": "Mentions download_paper() or composable pipeline step functions", "passed": true, "evidence": "Shows both run_pipeline() shortcut and full 8-step composable workflow"},
+        {"text": "Explains what the pipeline does (download, extract, analyze, write to Notion)", "passed": true, "evidence": "Lists 8 numbered steps: download, extract text/figures, create Notion page, classify, summarize, translate captions, LLM analysis, write note with figures"},
+        {"text": "Response is actionable with importable/callable Python code", "passed": true, "evidence": "Provides complete copy-pasteable Python code with all necessary imports"}
+      ]
+    },
+    {
+      "eval_id": 1,
+      "eval_name": "paper-add",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.25,
+        "passed": 1,
+        "failed": 3,
+        "total": 4,
+        "time_seconds": 23.0,
+        "tokens": 14078
+      },
+      "expectations": [
+        {"text": "References PipelineContext.from_config() or imports from paper_tool", "passed": false, "evidence": "Only shows CLI commands (uv run paper-tool add); no Python imports or PipelineContext usage"},
+        {"text": "Mentions download_paper() or composable pipeline step functions", "passed": false, "evidence": "Only references the monolithic paper-tool CLI, no composable function mentions"},
+        {"text": "Explains what the pipeline does (download, extract, analyze, write to Notion)", "passed": true, "evidence": "Lists 3 steps: download PDF, LLM analysis, write to Notion"},
+        {"text": "Response is actionable with importable/callable Python code", "passed": false, "evidence": "Only provides bash CLI commands, no Python code"}
+      ]
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "latex-debug",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 55.8,
+        "tokens": 23637
+      },
+      "expectations": [
+        {"text": "Points to papers/<paper_dir>/debug/ for diagnostic artifacts", "passed": true, "evidence": "Lists tab_NNN.json, tab_NNN.tex, tab_NNN.log, tab_NNN.stdout/stderr in papers/<paper_dir>/debug/"},
+        {"text": "Mentions debug-table.sh script for isolation", "passed": true, "evidence": "Shows bash .claude/skills/paper-reading-workflow/scripts/debug-table.sh papers/<paper_dir>/paper.tex <table_index>"},
+        {"text": "References latex-failure-patterns.md or common failure patterns", "passed": true, "evidence": "References reference/latex-failure-patterns.md checklist and categorizes failures"},
+        {"text": "Explains re-import after fixing (--force --rerender-tables)", "passed": true, "evidence": "Shows uv run paper-tool add <paper_url> --force --rerender-tables --debug"},
+        {"text": "Mentions regression verification on previously-working papers", "passed": true, "evidence": "Explicitly says to re-run a previously-working paper with --force --rerender-tables"}
+      ]
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "latex-debug",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.2,
+        "passed": 1,
+        "failed": 4,
+        "total": 5,
+        "time_seconds": 97.8,
+        "tokens": 57104
+      },
+      "expectations": [
+        {"text": "Points to papers/<paper_dir>/debug/ for diagnostic artifacts", "passed": true, "evidence": "Lists table_XX.json, table_XX.latex.tex, table_XX.latex.log, table_XX.latex.stderr.txt with detailed descriptions"},
+        {"text": "Mentions debug-table.sh script for isolation", "passed": false, "evidence": "No mention of debug-table.sh anywhere in the response"},
+        {"text": "References latex-failure-patterns.md or common failure patterns", "passed": false, "evidence": "Lists failure patterns but never references latex-failure-patterns.md or the skill's reference docs"},
+        {"text": "Explains re-import after fixing (--force --rerender-tables)", "passed": false, "evidence": "Mentions rerender_tables in config.yaml but doesn't use --force or --rerender-tables CLI flags"},
+        {"text": "Mentions regression verification on previously-working papers", "passed": false, "evidence": "No mention of regression testing on previously-working papers"}
+      ]
+    },
+    {
+      "eval_id": 3,
+      "eval_name": "batch-import",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 54.0,
+        "tokens": 22795
+      },
+      "expectations": [
+        {"text": "Mentions iterating over URLs in a loop or batch processing pattern", "passed": true, "evidence": "Shows Python for loop: for url in urls: try...except...continue, collecting successes and failures"},
+        {"text": "Recommends try/except per paper for resilience (equivalent to --continue-on-error)", "passed": true, "evidence": "Shows try/except Exception as e pattern inside the loop, failures.append((url, str(e))), continue"},
+        {"text": "Explains how to re-run or debug individual failures", "passed": true, "evidence": "Collects failures list, prints FAILED: url — err at the end"},
+        {"text": "References the batch workflow from the skill or shows composable step functions", "passed": true, "evidence": "Imports PipelineContext.from_config(), download_paper, extract_paper_text, run_pipeline from paper_tool modules"}
+      ]
+    },
+    {
+      "eval_id": 3,
+      "eval_name": "batch-import",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.0,
+        "passed": 0,
+        "failed": 4,
+        "total": 4,
+        "time_seconds": 34.2,
+        "tokens": 15980
+      },
+      "expectations": [
+        {"text": "Mentions iterating over URLs in a loop or batch processing pattern", "passed": false, "evidence": "Only shows the monolithic CLI batch command; no loop or iteration pattern"},
+        {"text": "Recommends try/except per paper for resilience (equivalent to --continue-on-error)", "passed": false, "evidence": "Only mentions --continue-on-error CLI flag; no try/except or programmatic error handling"},
+        {"text": "Explains how to re-run or debug individual failures", "passed": false, "evidence": "Only says '看输出的错误信息单独排查即可' without explaining re-run mechanics"},
+        {"text": "References the batch workflow from the skill or shows composable step functions", "passed": false, "evidence": "No Python imports, no composable functions, no skill references"}
+      ]
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {"mean": 1.0, "stddev": 0.0, "min": 1.0, "max": 1.0},
+      "time_seconds": {"mean": 51.5, "stddev": 6.1, "min": 44.8, "max": 55.8},
+      "tokens": {"mean": 21621, "stddev": 2840, "min": 18431, "max": 23637}
+    },
+    "without_skill": {
+      "pass_rate": {"mean": 0.15, "stddev": 0.13, "min": 0.0, "max": 0.25},
+      "time_seconds": {"mean": 51.7, "stddev": 39.8, "min": 23.0, "max": 97.8},
+      "tokens": {"mean": 29054, "stddev": 24387, "min": 14078, "max": 57104}
+    },
+    "delta": {
+      "pass_rate": "+0.85",
+      "time_seconds": "-0.1",
+      "tokens": "-7433"
+    }
+  }
+}

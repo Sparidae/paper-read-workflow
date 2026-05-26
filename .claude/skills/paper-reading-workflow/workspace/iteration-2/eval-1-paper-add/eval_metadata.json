@@ -1,0 +1,11 @@
+{
+  "eval_id": 1,
+  "eval_name": "paper-add",
+  "prompt": "帮我把这篇论文加到Notion里 https://arxiv.org/abs/2301.12345",
+  "assertions": [
+    "References PipelineContext.from_config() or imports from paper_tool",
+    "Mentions download_paper() or composable pipeline step functions",
+    "Explains what the pipeline does (download, extract, analyze, write to Notion)",
+    "Response is actionable with importable/callable Python code"
+  ]
+}
