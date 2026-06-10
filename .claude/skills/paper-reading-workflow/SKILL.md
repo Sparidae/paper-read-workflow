@@ -1,256 +1,167 @@
 ---
 name: paper-reading-workflow
-description: Use when the user wants to add papers to Notion, process arxiv/OpenReview papers, generate AI reading notes, debug LaTeX figure/table rendering failures, batch import papers, or manage their academic paper reading pipeline. Triggers on mentions of 论文, paper reading, arxiv, Notion笔记, LaTeX渲染, 表格渲染, 图表提取, paper-tool, or any paper processing workflow.
+description: |
+  Process academic papers end-to-end: download from arxiv/OpenReview/URL, extract text and figures/tables from LaTeX, generate AI reading notes, classify, summarize, and publish to Notion. Use this skill whenever the user mentions 论文, paper, arxiv, reading notes, LaTeX渲染, 表格提取, 图表, Notion笔记, paper-tool, or wants to process/import/analyze any academic paper. Also use when debugging figure or table rendering failures.
 ---
 
 # Paper Reading Workflow
 
-## Overview
-
-This is an agent-oriented toolkit for processing academic papers. Every pipeline step is a Python function you can import and call directly — no CLI subprocess needed. The `PipelineContext` dataclass bundles all configuration; construct it once and pass it to whichever steps you need.
-
-**Core principle:** You have full control. Mix and match steps, skip the ones you don't need, inject your own logic between them.
-
-## Setup
-
-Always start by loading configuration:
-
-```python
-from paper_tool.config import PipelineContext
-
-ctx = PipelineContext.from_config()
-```
-
-This reads `config.yaml` and `.env` with the same search logic as the CLI. Every business class also has a `from_context(ctx)` factory, or you can pass parameters explicitly:
-
-```python
-from paper_tool.llm_analyzer import LLMAnalyzer
-
-# Option A: from config
-analyzer = LLMAnalyzer.from_context(ctx)
-
-# Option B: explicit (agent-controlled)
-analyzer = LLMAnalyzer(
-    model="gpt-4o",
-    max_input_tokens=100000,
-    max_output_tokens=4000,
-    temperature=0.2,
-)
-```
-
-## Core Workflow: Adding a Single Paper
-
-The full pipeline is available as `run_pipeline()` for one-shot use, but agents should compose steps directly for more control:
-
-```python
-from paper_tool.config import PipelineContext
-from paper_tool.pipeline import download_paper, extract_paper_text
-from paper_tool.llm_classifier import LLMClassifier
-from paper_tool.llm_summarizer import LLMSummarizer
-from paper_tool.llm_analyzer import LLMAnalyzer, translate_captions
-from paper_tool.notion_service import NotionService
-
-ctx = PipelineContext.from_config()
-
-# Step 1: Download
-result = download_paper("https://arxiv.org/abs/2301.12345", ctx.papers_dir)
-# result.downloader, result.metadata, result.pdf_path
-
-# Step 2: Extract text + visuals
-ext = extract_paper_text(
-    result.downloader, result.metadata, result.pdf_path, ctx.papers_dir,
-    max_input_tokens=ctx.llm_max_input_tokens,
-    max_figures=ctx.max_figures,
-    max_tables=ctx.max_tables,
-    rerender_figures=ctx.rerender_figures,
-    rerender_tables=ctx.rerender_tables,
-)
-# ext.paper_text, ext.tex_path, ext.figures, ext.tables
-
-# Step 3: Notion
-notion = NotionService.from_context(ctx)
-page_id = notion.create_page(result.metadata)
-
-# Step 4: Classify
-classifier = LLMClassifier.from_context(ctx)
-options = notion.get_classification_options()
-classification = classifier.classify(result.metadata, options)
-notion.update_classifications(page_id, classification)
-
-# Step 5: Summarize
-summarizer = LLMSummarizer.from_context(ctx)
-summary = summarizer.summarize(result.metadata)
-notion.update_summary(page_id, summary)
-
-# Step 6: Translate captions
-if ext.figures:
-    ext.figures = translate_captions(ext.figures, model=ctx.llm_model,
-                                      temperature=ctx.llm_temperature,
-                                      translator_max_tokens=ctx.llm_translator_max_tokens)
-
-# Step 7: Analyze
-analyzer = LLMAnalyzer.from_context(ctx)
-note = analyzer.analyze(result.metadata, ext.paper_text,
-                        figures=ext.figures, tables=ext.tables)
-
-# Step 8: Write to Notion
-notion.append_note_with_figures(page_id, note, ext.figures, ext.tables)
-```
-
-### Shortcut: run_pipeline()
-
-For simple cases, `run_pipeline()` still works. It internally uses the same step functions:
-
-```python
-from paper_tool.pipeline import run_pipeline
-
-success = run_pipeline("https://arxiv.org/abs/2301.12345")
-```
-
-## Batch Import
-
-Iterate over URLs and call the steps. Use `--continue-on-error` semantics by catching exceptions per paper:
-
-```python
-from paper_tool.pipeline import download_paper, extract_paper_text
-
-urls = ["https://arxiv.org/abs/2301.12345", "https://arxiv.org/abs/2301.12346"]
-for url in urls:
-    try:
-        result = download_paper(url, ctx.papers_dir)
-        # ... process each paper
-    except Exception as e:
-        print(f"Failed: {url} — {e}")
-        continue
-```
-
-## Chat with a Paper
-
-```python
-from paper_tool.llm_chat import ChatSession, find_paper_file
-
-file_path = find_paper_file("2301.12345", ctx.papers_dir)
-session = ChatSession.from_context(file_path, ctx=ctx)
-answer = session.ask("这篇论文的主要贡献是什么？")
-```
-
-## LaTeX Debugging Workflow
-
-This is the most common failure mode. Different papers use different LaTeX packages, custom macros, and non-standard formatting.
-
-### Step 1: Identify the Failure Type
-
-Check `papers/<paper_dir>/debug/` — each table/figure has:
-- `table_NN.json` / `figure_NN.json` — `renderer` field: `"latex"`, `"matplotlib"`, or `"cached"`
-- `.latex.tex`, `.latex.log`, `.latex.stdout.txt`, `.latex.stderr.txt` — compilation artifacts
-
-### Step 2: Isolate and Reproduce
-
-Use the debug scripts to compile a single figure or table in isolation:
-
-```bash
-bash .claude/skills/paper-reading-workflow/scripts/debug-table.sh \
-  papers/<paper_dir>/paper.tex <table_index>
-```
-
-This is much faster than re-running the full pipeline.
-
-### Step 3: Diagnose and Fix
-
-Common failure patterns — read `reference/latex-failure-patterns.md` for the full catalog:
-- **Missing macro**: `\newcommand` defined in body (not preamble) → inject into preamble
-- **`\resizebox` wrapping table**: pdflatex can't handle it → strip wrapper, retry
-- **Font package not installed**: map to available fonts or install missing package
-- **pgfplotstable with external data**: data file not found → inline the data
-- **TikZ figure touches border**: textwidth detection wrong → increase page dimensions
-
-After identifying the fix, modify the relevant parser in `src/paper_tool/` (`figure_extractor.py` or `table_extractor.py`).
-
-### Step 4: Verify the Fix
-
-```bash
-uv run paper-tool add <paper_url> --force --rerender-tables
-```
-
-Check `papers/<paper_dir>/debug/table_NN.json` — the `renderer` field should now be `"latex"`. Then verify previously-working papers don't regress. See `reference/latex-failure-patterns.md` for the regression checklist.
+You are an agent that processes academic papers. Your job: take a paper URL (or name), download it, extract content, generate reading notes via LLM, and publish to Notion with embedded figures and tables.
 
 ## Scripts
 
-| Script | Purpose |
-|--------|---------|
-| `scripts/debug-figure.sh` | Extract and standalone-render a single figure from paper.tex |
-| `scripts/debug-table.sh` | Extract and standalone-render a single table from paper.tex |
-| `scripts/reimport-paper.sh` | Force re-import a paper by paper_dir name |
-| `scripts/create_notion_db.py` | Create a Notion database from `notion_schema.yaml` |
-| `scripts/rank_by_likes.py` | Rank papers by alphaXiv likes + S2 citations |
-
-## Configuration Reference
-
-### Key Paths
-
-| Item | Location |
-|------|----------|
-| Runtime config | `config.yaml` (searches upward from cwd) |
-| Secrets | `.env` (same search strategy) |
-| Paper storage | `papers/` (configurable via `storage.papers_dir`) |
-| Prompt templates | `prompts/analyzer.md`, `classifier.md`, `summarizer.md` |
-| Debug artifacts | `papers/<paper_dir>/debug/` |
-
-### PipelineContext Fields
-
-When constructing LLM objects or calling step functions, reference these from `PipelineContext`:
-
-| Field | Type | Usage |
-|-------|------|-------|
-| `llm_model` | `str` | Model name for text LLM calls |
-| `llm_vision_model` | `str` | Model name for vision LLM calls |
-| `llm_temperature` | `float` | Temperature for all LLM calls |
-| `llm_max_input_tokens` | `int` | Truncation budget for paper text |
-| `llm_max_output_tokens` | `int` | Max tokens for note generation |
-| `llm_classifier_max_tokens` | `int` | Max tokens for classifier |
-| `llm_translator_max_tokens` | `int` | Max tokens for caption translation |
-| `llm_summarizer_max_tokens` | `int` | Max tokens for one-sentence summary |
-| `analyzer_prompt` | `str \| None` | Custom analyzer system prompt |
-| `classifier_prompt` | `str \| None` | Custom classifier system prompt |
-| `summarizer_prompt` | `str \| None` | Custom summarizer system prompt |
-| `max_figures` | `int` | Max figures per paper |
-| `max_tables` | `int` | Max tables per paper |
-| `rerender_figures` | `bool` | Force figure re-render |
-| `rerender_tables` | `bool` | Force table re-render |
-| `papers_dir` | `Path` | Root directory for paper storage |
-| `notion_token` | `str` | Notion integration token |
-| `notion_database_id` | `str` | Target Notion database ID |
-| `notion_properties` | `dict` | Property name mapping |
-| `notion_status_type` | `str` | `"checkbox"` or `"select"` |
-| `openai_vision_api_key` | `str \| None` | Vision API key (falls back to text key) |
-| `openai_vision_base_url` | `str \| None` | Vision API base URL |
-
-See `reference/paths.md` for the complete config reference and `reference/notion-properties.md` for the Notion database schema.
-
-## Project Structure
-
-When investigating parser bugs, work in these source files:
+All scripts live in this skill's `scripts/` directory. Run them with `uv run`:
 
 ```
-src/paper_tool/
-├── config.py             # Config, PipelineContext, get_config()
-├── pipeline.py           # run_pipeline(), download_paper(), extract_paper_text()
-├── figure_extractor.py   # Figure parsing + pdflatex rendering
-├── table_extractor.py    # Table parsing + pdflatex/matplotlib rendering
-├── pdf_parser.py         # PDF + LaTeX text extraction
-├── downloaders/          # Arxiv, OpenReview metadata + PDF download
-├── notion_service.py     # Notion API (pages, blocks, uploads)
-├── llm_analyzer.py       # Full reading notes + translate_captions()
-├── llm_classifier.py     # Paper classification
-├── llm_summarizer.py     # One-sentence summary
-├── llm_chat.py           # Multi-turn paper Q&A
-└── llm_stream.py         # completion_to_text() — low-level LLM call
+uv run scripts/download.py <url> [--papers-dir PATH]
+uv run scripts/extract_text.py <paper-dir> [--max-chars N]
+uv run scripts/extract_visuals.py <paper-dir> [--max-figures N] [--max-tables N] [--rerender]
+uv run scripts/classify.py <paper-dir> [--model M] [--options-json JSON]
+uv run scripts/summarize.py <paper-dir> [--model M]
+uv run scripts/translate_captions.py <paper-dir> [--model M]
+uv run scripts/analyze.py <paper-dir> [--model M] [--format json|freeform]
+uv run scripts/notion_write.py <paper-dir> [--force] [--skip-images]
+uv run scripts/notion_check.py <url>
+uv run scripts/debug_render.py <paper-dir> --type figure|table --index N
 ```
 
-## Common Pitfalls
+Every script outputs JSON to stdout:
+```json
+{"status": "ok", "message": "...", "outputs": {"key": "path"}}
+{"status": "error", "error": "...", "message": "human-readable explanation"}
+```
 
-- **Config not found**: `config.yaml` searches upward from cwd. Run commands from within the project or a subdirectory.
-- **Notion 404**: The database ID in `.env` may be wrong. Run `uv run paper-tool config check-db` to verify.
-- **Thinking model token exhaustion**: Models like kimi-k2.5 consume many tokens in CoT. Increase `classifier_max_tokens` and `translator_max_tokens` in `config.yaml`.
-- **`\include` not resolved**: `_expand_tex_includes` may miss non-standard paths. Check the merged `paper.tex`.
-- **Figure rendered as blank PNG**: The image file in `figures/` may be PDF-format. The tool auto-converts PDF to PNG, but check `convert_pdf_figures()`.
+Exit code 0 = success, 1 = failure. Always check stdout JSON for details.
+
+## Decision Flows
+
+### User gives a paper URL
+
+Full pipeline, run in order:
+
+1. `notion_check.py <url>` — if exists and user didn't say "force/重新导入", tell them it's already there
+2. `download.py <url>` — produces `papers/<id>/` with PDF, LaTeX source, metadata.json
+3. `extract_text.py <paper-dir>` — produces text.txt
+4. `extract_visuals.py <paper-dir>` — produces figures/*.png, tables/*.png, visuals.json
+5. **Check visuals.json** — look at `render_stats`. If tables used matplotlib fallback, note it (might need debug later)
+6. `classify.py <paper-dir>` — produces classification.json
+7. `summarize.py <paper-dir>` — produces summary.txt
+8. `translate_captions.py <paper-dir>` — produces captions.json (translated figure/table captions to Chinese)
+9. `analyze.py <paper-dir>` — produces notes.md (full reading notes)
+10. `notion_write.py <paper-dir>` — creates Notion page with everything
+
+After notion_write succeeds, report the Notion page URL to the user.
+
+### User gives a vague paper name (not a URL)
+
+Search for the paper first:
+- Try arxiv search: `https://arxiv.org/search/?query=<terms>`
+- If found, confirm the paper with user, then run the full pipeline with the URL
+- If not found, ask user for a direct URL or more specific title
+
+### User wants batch import
+
+They'll provide a list of URLs (maybe in a file, maybe in chat). For each URL:
+1. Run the full pipeline above
+2. Track progress in manifest — skip papers already marked "done"
+3. If one fails, log the error and continue with the next
+4. Report a summary at the end: N succeeded, M failed (with reasons)
+
+### User says "re-analyze" or "换个模型重新分析"
+
+Only re-run the LLM steps, not download/extract:
+1. `analyze.py <paper-dir> --model <new-model>` — regenerates notes.md
+2. `notion_write.py <paper-dir> --force` — archives old page, creates new one
+
+### User reports figure/table rendering problems
+
+This is the debugging flow. Read `reference/latex-failure-patterns.md` for the full catalog.
+
+1. Check `<paper-dir>/visuals.json` — find which figures/tables used "matplotlib" fallback
+2. Check `<paper-dir>/debug/` — read the .log and .tex files for the failing item
+3. Diagnose the LaTeX error (common: undefined macro, missing package, resizebox wrapping)
+4. Fix the issue in the relevant extractor script
+5. `debug_render.py <paper-dir> --type table --index N` — re-render just that item
+6. Verify the output PNG looks correct
+7. If the fix is in extractor code, re-run on a few other papers to check for regression
+
+### User wants to check/resume a paper
+
+Read the manifest to see what's done. Run remaining steps from where it left off.
+
+## Manifest
+
+You maintain `papers/.manifest.json` yourself. Update it after each script call.
+
+Schema:
+```json
+{
+  "papers": {
+    "<paper_id>": {
+      "paper_dir": "papers/<id>_<title>/",
+      "url": "https://...",
+      "title": "Paper Title",
+      "steps": {
+        "download": {"status": "done", "at": "2026-06-10T14:30:00Z"},
+        "extract_text": {"status": "done", "at": "..."},
+        "extract_visuals": {"status": "done", "at": "...", "figures": 5, "tables": 3, "fallbacks": 1},
+        "classify": {"status": "done", "at": "..."},
+        "summarize": {"status": "done", "at": "..."},
+        "translate_captions": {"status": "done", "at": "..."},
+        "analyze": {"status": "done", "at": "..."},
+        "notion_write": {"status": "done", "at": "...", "page_url": "https://notion.so/..."}
+      }
+    }
+  }
+}
+```
+
+Status values: `"done"`, `"error"`, `"skipped"`, `"pending"`.
+After each script call, update the relevant step based on stdout JSON.
+
+## Paper Directory Structure
+
+Each paper gets its own directory under `papers/`:
+```
+papers/{paper_id}_{safe_title}/
+├── paper.pdf              ← download.py
+├── paper.tex              ← download.py (arXiv only)
+├── source/                ← download.py (raw LaTeX files)
+├── figures/*.png          ← extract_visuals.py (rendered figures)
+├── tables/*.png           ← extract_visuals.py (rendered tables)
+├── debug/                 ← extract_visuals.py (LaTeX compile logs)
+├── metadata.json          ← download.py
+├── text.txt               ← extract_text.py
+├── visuals.json           ← extract_visuals.py
+├── classification.json    ← classify.py
+├── summary.txt            ← summarize.py
+├── captions.json          ← translate_captions.py
+└── notes.md               ← analyze.py
+```
+
+## Configuration
+
+Scripts read config from two files (searched upward from cwd):
+- `.env` — secrets: OPENAI_API_KEY, NOTION_TOKEN, NOTION_DATABASE_ID
+- `config.yaml` — model settings, token limits, Notion property mappings
+
+If these don't exist, run `scripts/init_config.py` to create them interactively.
+
+## Error Recovery
+
+| Script | Common failure | What to do |
+|--------|---------------|------------|
+| download.py | 404 / network timeout | Check URL is valid; retry once |
+| extract_text.py | PDF corrupt or encrypted | Tell user; skip this paper |
+| extract_visuals.py | No LaTeX source (non-arXiv) | Skip; set step to "skipped" |
+| extract_visuals.py | pdflatex not installed | Tell user to install texlive |
+| classify.py | LLM rate limit | Wait 30s and retry |
+| analyze.py | LLM output too long / truncated | Retry with higher max_tokens |
+| notion_write.py | Notion API 401 | Check NOTION_TOKEN in .env |
+| notion_write.py | Image upload fails | Retry; if persistent, use --skip-images |
+
+## References
+
+- `reference/latex-failure-patterns.md` — Read when debugging render failures
+- `reference/notion-properties.md` — Read when dealing with Notion schema issues
+- `prompts/` — LLM prompt templates (analyzer.md, classifier.md, summarizer.md)
