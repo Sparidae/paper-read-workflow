@@ -7,38 +7,23 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import httpx
-from _lib import load_config, output_error, output_ok
+from _backend_config import BackendConfigError, load_notion_config
+from _lib import output_error, output_ok
 
 
-def _load_notion_config() -> tuple[str, str, dict[str, str]]:
-    """Return (token, database_id, properties) from env + notion_schema.yaml."""
-    import yaml
-
-    load_config()  # ensures .env is loaded
-    token = os.getenv("NOTION_TOKEN", "")
-    database_id = os.getenv("NOTION_DATABASE_ID", "")
-
-    if not token or not database_id:
-        output_error("NOTION_TOKEN and NOTION_DATABASE_ID must be set in .env")
-        sys.exit(1)
-
-    from _lib import find_project_root
-
-    schema_path = find_project_root() / "notion_schema.yaml"
-    if schema_path.exists():
-        with open(schema_path) as f:
-            schema = yaml.safe_load(f) or {}
-        properties = schema.get("notion", {}).get("properties", {})
-    else:
-        properties = {}
-
-    return token, database_id, properties
+def _load_notion_config(interactive: bool = True) -> tuple[str, str, dict[str, str]]:
+    """Return (token, database_id, properties) from backends/notion/backend.yaml."""
+    cfg = load_notion_config(interactive=interactive)
+    return (
+        cfg["token"],
+        cfg["database_id"],
+        cfg["properties"],
+    )
 
 
 def find_existing_pages(
@@ -93,9 +78,25 @@ def find_existing_pages(
 def main():
     parser = argparse.ArgumentParser(description="Check if paper exists in Notion")
     parser.add_argument("paper_url", help="Paper URL to check")
+    parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Do not prompt for missing config; emit a structured error",
+    )
     args = parser.parse_args()
 
-    token, database_id, properties = _load_notion_config()
+    try:
+        token, database_id, properties = _load_notion_config(
+            interactive=not args.non_interactive
+        )
+    except BackendConfigError as e:
+        output_error(
+            f"Notion backend needs configuration: {e}",
+            backend=e.backend,
+            missing=e.missing,
+            hint="Run interactively or fill backends/notion/backend.yaml",
+        )
+        sys.exit(1)
     url_prop = properties.get("url", "论文链接")
 
     try:

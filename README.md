@@ -143,25 +143,25 @@ uv run paper-tool config init
 - `storage.papers_dir`
 - `citations.refresh_interval_days`
 
-Notion 数据库 schema 默认放在仓库里的 `notion_schema.yaml`，不是敏感信息；项目默认按这个模板工作。
+Notion 数据库 schema 默认放在 `backends/notion/schema.yaml`，不是敏感信息；项目默认按这个模板工作。
 
 ## 4. 检查配置是否正确
 
 ```bash
 uv run paper-tool config show
 uv run paper-tool config check-db
-uv run python scripts/create_notion_db.py
+uv run python skill/scripts/create_notion_db.py
 ```
 
 - `config show`：展示当前实际生效的配置（密钥会脱敏）
-- `config check-db`：检查 Notion 数据库字段是否与 `notion_schema.yaml` 一致
-- `scripts/create_notion_db.py`：按 `notion_schema.yaml` 创建一个新的 Notion 数据库
+- `config check-db`：检查 Notion 数据库字段是否与 `backends/notion/schema.yaml` 一致
+- `skill/scripts/create_notion_db.py`：按 `backends/notion/schema.yaml` 创建一个新的 Notion 数据库
 
 ---
 
 ## Notion 数据库要求
 
-默认字段映射来自仓库根目录的 `notion_schema.yaml`。
+默认字段映射来自 `backends/notion/schema.yaml`。
 
 推荐至少有这些字段：
 
@@ -192,7 +192,7 @@ uv run python scripts/create_notion_db.py
 如果你还没有目标数据库：
 
 ```bash
-uv run python scripts/create_notion_db.py --parent-page-id <your_notion_page_id>
+uv run python skill/scripts/create_notion_db.py --parent-page-id <your_notion_page_id>
 ```
 
 也可以直接运行 `uv run paper-tool add <url>` 或 `batch`。CLI 会先做自检；如果数据库不存在或 schema 不匹配，会要求你先运行这个预置脚本建库。
@@ -408,32 +408,31 @@ llm:
 
 ## 目录结构
 
-当前项目大致结构如下：
+当前项目按 [Agent Skills](https://github.com/agentskills/agentskills) 规范整理，分为「用户工作区」和「Skill 本体」两部分：
 
 ```text
-paper_list/
-├── src/paper_tool/
-│   ├── cli.py                  # CLI 入口
-│   ├── pipeline.py             # 主流程编排
-│   ├── config.py               # config.yaml + .env 加载
-│   ├── notion_service.py       # Notion 写入
-│   ├── pdf_parser.py           # PDF / LaTeX 文本提取
-│   ├── figure_extractor.py     # 图片提取
-│   ├── table_extractor.py      # 表格提取与渲染
-│   ├── llm_analyzer.py         # 阅读笔记生成
-│   ├── llm_classifier.py       # 分类
-│   ├── llm_summarizer.py       # 一句话摘要
-│   ├── llm_chat.py             # 多轮问答
-│   ├── server.py               # Web UI 服务
-│   └── downloaders/
-│       ├── arxiv.py            # Arxiv 下载器
-│       └── openreview.py       # OpenReview 下载器
-├── prompts/                    # 可自定义的提示词
-├── scripts/                    # 辅助脚本
+paper-read-workflow/            # 用户工作区（数据 + 配置）
 ├── papers/                     # 下载后的论文与渲染产物
+├── config.yaml                 # 运行配置
 ├── config.yaml.example         # 配置模板
-├── pyproject.toml              # 项目依赖与脚本入口
-└── README.md
+├── .env                        # 密钥
+├── .env.example                # 密钥模板
+├── README.md                   # 面向人类的使用说明
+├── CLAUDE.md                   # agent 开发约定
+└── skill/                      # Agent Skill 本体
+    ├── SKILL.md                # skill 元数据 + agent 指令
+    ├── scripts/                # 可执行脚本
+    ├── references/             # 参考文档
+    │   ├── latex-failure-patterns.md
+    │   ├── notion-properties.md
+    │   └── paths.md
+    └── assets/                 # 模板/资源
+        ├── prompts/            # LLM 提示词模板
+        │   ├── analyzer.md
+        │   ├── classifier.md
+        │   ├── render_repair.md
+        │   └── summarizer.md
+        └── notion_schema.yaml  # Notion 数据库 schema
 ```
 
 一个 Arxiv 论文目录通常会包含：
@@ -477,10 +476,10 @@ OPENAI_BASE_URL=https://your-endpoint/v1
 
 ## 自定义提示词
 
-你可以直接修改 `prompts/` 目录下的提示词文件：
-- `prompts/analyzer.md`
-- `prompts/classifier.md`
-- `prompts/summarizer.md`
+你可以直接修改 `skill/assets/prompts/` 目录下的提示词文件：
+- `skill/assets/prompts/analyzer.md`
+- `skill/assets/prompts/classifier.md`
+- `skill/assets/prompts/summarizer.md`
 
 对应路径在 `config.yaml` 中配置。
 

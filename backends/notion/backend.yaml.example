@@ -1,0 +1,46 @@
+# Notion 后端配置
+# 复制此文件为 backend.yaml 并填写实际值，或让 skill 在运行时自动引导你配置。
+
+enabled: true
+
+auth:
+  # 认证信息优先从环境变量读取（对应 *_env 字段）。
+  # 也可以直接填写在下面的 token / database_id / parent_page_id 中。
+  token: ""
+  token_env: NOTION_TOKEN
+
+  database_id: ""
+  database_id_env: NOTION_DATABASE_ID
+
+  parent_page_id: ""
+  parent_page_id_env: NOTION_PARENT_PAGE_ID
+
+storage:
+  # database - 写入 Notion 数据库
+  # page     - 写入单个页面（暂不支持）
+  type: database
+  # 目标 database_id；留空时若 auto_create 为 true 且 parent_page_id 有效，会自动建库
+  target: ""
+  auto_create: false
+
+knowledge_base:
+  # 用于分类和状态管理的属性名，需与 mapping.properties 保持一致
+  tag_property: "研究领域"
+  status_property: "阅读状态"
+
+mapping:
+  # 逻辑字段名 → Notion 数据库属性名
+  properties:
+    title: "论文笔记"
+    authors: "作者"
+    abstract: "一句话摘要"
+    source: "来源"
+    url: "论文链接"
+    published_date: "发表日期"
+    added_date: "添加日期"
+    tags: "研究领域"
+    paper_type: "论文类型"
+    institution: "来源机构"
+    status: "阅读状态"
+  status_type: "checkbox"      # checkbox | select
+  default_status: "Unread"

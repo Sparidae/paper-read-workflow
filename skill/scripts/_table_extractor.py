@@ -40,6 +40,7 @@ from pathlib import Path as _Path
 
 sys.path.insert(0, str(_Path(__file__).parent))
 from _lib import FigureInfo
+from _render_repair import repair_render
 
 _MAX_FILE_BYTES = 18 * 1024 * 1024
 
@@ -608,6 +609,9 @@ def _render_table_latex(
     debug_dir: Path | None = None,
     stem: str = "table",
     retry_table_body: str | None = None,
+    repair: bool = False,
+    max_repair_attempts: int = 3,
+    enable_llm_repair: bool = False,
 ) -> bool:
     """将 ``table_body`` 编译为 standalone LaTeX 文档并光栅化为 PNG。
 
@@ -615,32 +619,72 @@ def _render_table_latex(
     可提供重试变体（``retry_table_body``）——若首次编译失败且重试 body 不同，
     则进行第二次尝试。
 
+    当 ``repair`` 为 True 时，启用 check → diagnose → repair → re-render 循环，
+    自动尝试修复 LaTeX 编译或渲染质量问题。
+
     成功返回 True，任何失败（pdflatex 缺失、编译错误、空 PDF 等）返回 False。
     """
     if not shutil.which("pdflatex"):
         return False
 
-    attempts = [(table_body, "compile_error")]
-    if retry_table_body and retry_table_body.strip() and retry_table_body != table_body:
-        attempts.append((retry_table_body, "compile_error_retry"))
+    if debug_dir is None:
+        debug_dir = output_path.parent / "debug"
 
-    for current_body, status_note in attempts:
-        tex_src = (
-            _LATEX_TEMPLATE.replace("@@RENEW_STUBS@@", renew_stubs)
-            .replace("@@PREAMBLE_MACROS@@", preamble_macros)
-            .replace("@@TABLE_BODY@@", current_body)
-            .replace("@@TEXT_WIDTH@@", text_width)
-        )
-        if _render_table_latex_source(
-            tex_src,
-            output_path,
+    if not repair:
+        attempts = [(table_body, "compile_error")]
+        if (
+            retry_table_body
+            and retry_table_body.strip()
+            and retry_table_body != table_body
+        ):
+            attempts.append((retry_table_body, "compile_error_retry"))
+
+        for current_body, status_note in attempts:
+            tex_src = (
+                _LATEX_TEMPLATE.replace("@@RENEW_STUBS@@", renew_stubs)
+                .replace("@@PREAMBLE_MACROS@@", preamble_macros)
+                .replace("@@TABLE_BODY@@", current_body)
+                .replace("@@TEXT_WIDTH@@", text_width)
+            )
+            if _render_table_latex_source(
+                tex_src,
+                output_path,
+                debug_dir=debug_dir,
+                stem=stem,
+                status_note=status_note,
+            ):
+                return True
+
+        return False
+
+    # Repair path: build initial source and enter the repair loop.
+    tex_src = (
+        _LATEX_TEMPLATE.replace("@@RENEW_STUBS@@", renew_stubs)
+        .replace("@@PREAMBLE_MACROS@@", preamble_macros)
+        .replace("@@TABLE_BODY@@", table_body)
+        .replace("@@TEXT_WIDTH@@", text_width)
+    )
+
+    def render_func(ts: str, op: Path) -> bool:
+        return _render_table_latex_source(
+            ts,
+            op,
             debug_dir=debug_dir,
             stem=stem,
-            status_note=status_note,
-        ):
-            return True
+            status_note="repair_attempt",
+        )
 
-    return False
+    result = repair_render(
+        tex_src,
+        output_path,
+        debug_dir,
+        stem,
+        render_func,
+        kind="table",
+        max_attempts=max_repair_attempts,
+        enable_llm=enable_llm_repair,
+    )
+    return result.success
 
 
 # ── matplotlib 回退 ─────────────────────────────────────────────────────────────
@@ -828,12 +872,20 @@ def parse_tables(
     tables_dir: Path,
     max_tables: int = 10,
     force_rerender: bool = False,
+    repair: bool = False,
+    max_repair_attempts: int = 3,
+    enable_llm_repair: bool = False,
 ) -> list[FigureInfo]:
     """解析合并后的 LaTeX 文件，返回渲染为 PNG 的表格信息列表。
 
     支持两种表格类型，详见模块 docstring。
 
     若 ``tex_path`` 不存在或无法读取，返回空列表。
+
+    Args:
+        repair: 启用 check → diagnose → repair → re-render 循环。
+        max_repair_attempts: 每个表格最大修复尝试次数。
+        enable_llm_repair: 规则修复失败后是否调用 LLM 兜底。
     """
     if not tex_path.exists():
         return []
@@ -923,6 +975,9 @@ def parse_tables(
                 retry_table_body=retry_table_body or tabular_raw
                 if retry_table_body is not None
                 else None,
+                repair=repair,
+                max_repair_attempts=max_repair_attempts,
+                enable_llm_repair=enable_llm_repair,
             )
             if ok:
                 render_backend = "latex"

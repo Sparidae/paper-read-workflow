@@ -1,28 +1,47 @@
 ---
 name: paper-reading-workflow
 description: |
-  Process academic papers end-to-end: download from arxiv/OpenReview/URL, extract text and figures/tables from LaTeX, generate AI reading notes, classify, summarize, and publish to Notion. Use this skill whenever the user mentions 论文, paper, arxiv, reading notes, LaTeX渲染, 表格提取, 图表, Notion笔记, paper-tool, or wants to process/import/analyze any academic paper. Also use when debugging figure or table rendering failures.
+  Process academic papers end-to-end: download from arxiv/OpenReview/URL, extract text and figures/tables from LaTeX, generate AI reading notes, classify, summarize, and publish to Notion or Lark (飞书). Use this skill whenever the user mentions 论文, paper, arxiv, reading notes, LaTeX渲染, 表格提取, 图表, Notion笔记, 飞书文档, paper-tool, or wants to process/import/analyze any academic paper. Also use when debugging figure or table rendering failures.
 ---
 
 # Paper Reading Workflow
 
-You are an agent that processes academic papers. Your job: take a paper URL (or name), download it, extract content, generate reading notes via LLM, and publish to Notion with embedded figures and tables.
+You are an agent that processes academic papers. Your job: take a paper URL (or name), download it, extract content, generate reading notes via LLM, and publish to Notion or Lark (飞书) with embedded figures and tables.
+
+## Output Backend Selection
+
+Check `config.yaml` → `output.backends` to determine where to publish. It is a list:
+- `["notion"]` (default) → run `notion_write.py`
+- `["lark"]` → run `lark_write.py`
+- `["notion", "lark"]` → run both
+
+Each backend has its own configuration directory under `backends/<name>/`:
+- `backends/notion/backend.yaml` — token, database_id, property mappings
+- `backends/lark/backend.yaml` — identity, parent folder token
+
+If a backend config is missing or incomplete, the script will prompt for the missing values automatically. You can also copy the example files manually:
+
+```bash
+cp backends/notion/backend.yaml.example backends/notion/backend.yaml
+cp backends/lark/backend.yaml.example backends/lark/backend.yaml
+```
 
 ## Scripts
 
-All scripts live in this skill's `scripts/` directory. Run them with `uv run`:
+All scripts live in this skill's `skill/scripts/` directory. Run them with `uv run`:
 
 ```
-uv run scripts/download.py <url> [--papers-dir PATH]
-uv run scripts/extract_text.py <paper-dir> [--max-chars N]
-uv run scripts/extract_visuals.py <paper-dir> [--max-figures N] [--max-tables N] [--rerender]
-uv run scripts/classify.py <paper-dir> [--model M] [--options-json JSON]
-uv run scripts/summarize.py <paper-dir> [--model M]
-uv run scripts/translate_captions.py <paper-dir> [--model M]
-uv run scripts/analyze.py <paper-dir> [--model M] [--format json|freeform]
-uv run scripts/notion_write.py <paper-dir> [--force] [--skip-images]
-uv run scripts/notion_check.py <url>
-uv run scripts/debug_render.py <paper-dir> --type figure|table --index N
+uv run skill/scripts/download.py <url> [--papers-dir PATH]
+uv run skill/scripts/extract_text.py <paper-dir> [--max-chars N]
+uv run skill/scripts/extract_visuals.py <paper-dir> [--max-figures N] [--max-tables N] [--rerender] [--repair] [--no-repair] [--max-repair-attempts N] [--enable-llm-repair]
+uv run skill/scripts/classify.py <paper-dir> [--model M] [--options-json JSON]
+uv run skill/scripts/summarize.py <paper-dir> [--model M]
+uv run skill/scripts/translate_captions.py <paper-dir> [--model M]
+uv run skill/scripts/analyze.py <paper-dir> [--model M] [--format json|freeform]
+uv run skill/scripts/notion_write.py <paper-dir> [--force] [--skip-images]
+uv run skill/scripts/lark_write.py <paper-dir> [--force] [--skip-images]
+uv run skill/scripts/notion_check.py <url>
+uv run skill/scripts/debug_render.py <paper-dir> --type figure|table --index N
 ```
 
 Every script outputs JSON to stdout:
@@ -39,18 +58,24 @@ Exit code 0 = success, 1 = failure. Always check stdout JSON for details.
 
 Full pipeline, run in order:
 
-1. `notion_check.py <url>` — if exists and user didn't say "force/重新导入", tell them it's already there
+1. `notion_check.py <url>` — (Notion backend only) if exists and user didn't say "force/重新导入", tell them it's already there
 2. `download.py <url>` — produces `papers/<id>/` with PDF, LaTeX source, metadata.json
 3. `extract_text.py <paper-dir>` — produces text.txt
 4. `extract_visuals.py <paper-dir>` — produces figures/*.png, tables/*.png, visuals.json
-5. **Check visuals.json** — look at `render_stats`. If tables used matplotlib fallback, note it (might need debug later)
+   - **Always run with `--repair`** so the agent automatically fixes LaTeX compile failures, matplotlib fallback, and clipped figures/tables without bothering the user.
+   - The repair loop is bounded (`repair_max_attempts` in `config.yaml`) and writes per-attempt debug artifacts to `debug/*.attempt_*.quality.json`.
+   - Only use `--enable-llm-repair` if rule-based repair repeatedly fails and you want to spend extra tokens; otherwise stay with the default rule-only repair.
+5. **Check visuals.json** — look at `render_stats`. If any table still shows `matplotlib` fallback after repair, note it briefly but continue; do not ask the user what to do.
 6. `classify.py <paper-dir>` — produces classification.json
 7. `summarize.py <paper-dir>` — produces summary.txt
 8. `translate_captions.py <paper-dir>` — produces captions.json (translated figure/table captions to Chinese)
 9. `analyze.py <paper-dir>` — produces notes.md (full reading notes)
-10. `notion_write.py <paper-dir>` — creates Notion page with everything
+10. Publish to output backend(s) based on `config.yaml` → `output.backend`:
+    - **notion**: `notion_write.py <paper-dir>` — creates Notion database page with everything
+    - **lark**: `lark_write.py <paper-dir>` — creates Lark docx document with everything
+    - **both**: run both scripts
 
-After notion_write succeeds, report the Notion page URL to the user.
+After publish succeeds, report the page/document URL to the user.
 
 ### User gives a vague paper name (not a URL)
 
@@ -75,7 +100,7 @@ Only re-run the LLM steps, not download/extract:
 
 ### User reports figure/table rendering problems
 
-This is the debugging flow. Read `reference/latex-failure-patterns.md` for the full catalog.
+This is the debugging flow. Read `skill/references/latex-failure-patterns.md` for the full catalog.
 
 1. Check `<paper-dir>/visuals.json` — find which figures/tables used "matplotlib" fallback
 2. Check `<paper-dir>/debug/` — read the .log and .tex files for the failing item
@@ -109,7 +134,8 @@ Schema:
         "summarize": {"status": "done", "at": "..."},
         "translate_captions": {"status": "done", "at": "..."},
         "analyze": {"status": "done", "at": "..."},
-        "notion_write": {"status": "done", "at": "...", "page_url": "https://notion.so/..."}
+        "notion_write": {"status": "done", "at": "...", "page_url": "https://notion.so/..."},
+    "lark_write": {"status": "done", "at": "...", "doc_url": "https://xxx.feishu.cn/docx/..."}
       }
     }
   }
@@ -145,7 +171,7 @@ Scripts read config from two files (searched upward from cwd):
 - `.env` — secrets: OPENAI_API_KEY, NOTION_TOKEN, NOTION_DATABASE_ID
 - `config.yaml` — model settings, token limits, Notion property mappings
 
-If these don't exist, run `scripts/init_config.py` to create them interactively.
+If these don't exist, copy `config.yaml.example` to `config.yaml` and `.env.example` to `.env`, then fill in the required secrets.
 
 ## Error Recovery
 
@@ -159,9 +185,12 @@ If these don't exist, run `scripts/init_config.py` to create them interactively.
 | analyze.py | LLM output too long / truncated | Retry with higher max_tokens |
 | notion_write.py | Notion API 401 | Check NOTION_TOKEN in .env |
 | notion_write.py | Image upload fails | Retry; if persistent, use --skip-images |
+| lark_write.py | lark-cli not installed | Tell user to install lark-cli (`npm i -g @earendil-works/lark-cli`) |
+| lark_write.py | auth needs refresh | lark-cli auto-refreshes; retry once if fails |
+| lark_write.py | Image upload fails | Retry; if persistent, use --skip-images |
 
 ## References
 
-- `reference/latex-failure-patterns.md` — Read when debugging render failures
-- `reference/notion-properties.md` — Read when dealing with Notion schema issues
-- `prompts/` — LLM prompt templates (analyzer.md, classifier.md, summarizer.md)
+- `skill/references/latex-failure-patterns.md` — Read when debugging render failures
+- `skill/references/notion-properties.md` — Read when dealing with Notion schema issues
+- `skill/assets/prompts/` — LLM prompt templates (analyzer.md, classifier.md, summarizer.md)

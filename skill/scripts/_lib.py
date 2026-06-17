@@ -127,9 +127,9 @@ def llm_call(
 
 
 def load_prompt(name: str) -> str:
-    """Load a prompt template from the prompts/ directory."""
+    """Load a prompt template from skill/assets/prompts/."""
     root = find_project_root()
-    path = root / "prompts" / name
+    path = root / "skill" / "assets" / "prompts" / name
     if not path.exists():
         output_error(f"Prompt file not found: {path}")
         sys.exit(1)

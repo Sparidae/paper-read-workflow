@@ -34,13 +34,25 @@ llm:
   #   freeform - 模型输出任意文本，直接原样写入 Notion（自由发挥提示词）
   note_format: "json"
   # 提示词文件路径（相对于项目根目录）；注释掉则使用代码内置默认值
-  analyzer_prompt: "prompts/analyzer.md"
-  classifier_prompt: "prompts/classifier.md"
+  analyzer_prompt: "skill/assets/prompts/analyzer.md"
+  classifier_prompt: "skill/assets/prompts/classifier.md"
+  # 图表渲染修复配置
+  # 面向 agent 自动流程：默认开启，extract_visuals.py 会自动修复 LaTeX 渲染问题
+  enable_render_repair: true
+  enable_llm_render_repair: false
+  repair_max_attempts: 3
+  repair_model: ""
+  repair_max_output_tokens: 16000
 
 # PDF 存储配置
 storage:
   # PDF 文件存储目录（相对于项目根目录，或绝对路径）
   papers_dir: "papers"
 
-# Notion 数据库 schema 固定来自仓库根目录的 notion_schema.yaml。
-# 这里不再提供 Notion 字段覆盖配置。
+# 输出后端配置
+# 每个后端的详细配置位于 backends/<name>/backend.yaml
+output:
+  # 启用的输出后端列表
+  backends:
+    - "notion"
+    # - "lark"

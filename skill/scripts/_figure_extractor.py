@@ -22,6 +22,7 @@ from typing import Optional
 
 sys.path.insert(0, str(_Path(__file__).parent))
 from _lib import FigureInfo
+from _render_repair import repair_render
 
 # Stay comfortably below Notion's 20 MB single-part upload limit
 _MAX_FILE_BYTES = 18 * 1024 * 1024
@@ -505,7 +506,80 @@ def _looks_like_latex_drawn_figure(env_text: str) -> bool:
     return any(marker in env_text for marker in markers)
 
 
-def _render_figure_latex(
+def _compile_figure_tex_src_once(
+    tex_src: str,
+    output_path: Path,
+    *,
+    figures_dir: Path,
+    source_dir: Path,
+    debug_dir: Path,
+    stem: str,
+) -> bool:
+    """Compile a single standalone LaTeX source to PNG.
+
+    Writes debug artifacts on failure and trims whitespace on success.
+    """
+    _write_text(debug_dir / f"{stem}.latex.tex", tex_src)
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir_str:
+            tmpdir = Path(tmpdir_str)
+            _copy_tree_contents(source_dir, tmpdir)
+            if figures_dir.exists():
+                tmp_fig_dir = tmpdir / "figures"
+                tmp_fig_dir.mkdir(parents=True, exist_ok=True)
+                for asset in figures_dir.glob("*"):
+                    if asset.is_file():
+                        shutil.copy2(asset, tmp_fig_dir / asset.name)
+
+            tex_file = tmpdir / "figure.tex"
+            tex_file.write_text(tex_src, encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    "pdflatex",
+                    "-shell-escape",
+                    "-interaction=nonstopmode",
+                    "-halt-on-error",
+                    "figure.tex",
+                ],
+                cwd=tmpdir,
+                capture_output=True,
+                timeout=60,
+            )
+
+            pdf_file = tmpdir / "figure.pdf"
+            log_file = tmpdir / "figure.log"
+            if result.returncode != 0 or not pdf_file.exists():
+                _write_text(
+                    debug_dir / f"{stem}.latex.stdout.txt",
+                    result.stdout.decode("utf-8", errors="replace"),
+                )
+                _write_text(
+                    debug_dir / f"{stem}.latex.stderr.txt",
+                    result.stderr.decode("utf-8", errors="replace"),
+                )
+                if log_file.exists():
+                    shutil.copy2(log_file, debug_dir / f"{stem}.latex.log")
+                return False
+
+            import fitz  # PyMuPDF
+
+            doc = fitz.open(str(pdf_file))
+            if len(doc) == 0:
+                doc.close()
+                return False
+
+            page = doc[0]
+            pix = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5), alpha=False)
+            pix.save(str(output_path))
+            doc.close()
+            _trim_whitespace(output_path)
+            return True
+    except Exception:
+        return False
+
+
+def _render_figure_latex_once(
     figure_body: str,
     output_path: Path,
     preamble_macros: str,
@@ -518,98 +592,148 @@ def _render_figure_latex(
     text_width: str = "6.50in",
     column_width: str = "",
 ) -> bool:
-    """Compile a standalone figure and rasterise it to PNG."""
+    """Original one-shot figure render with height candidates."""
     if shutil.which("pdflatex") is None:
         return False
 
     col_width = column_width or text_width
+    height_candidates = ["10in", "16in", "24in"]
 
-    try:
-        height_candidates = ["10in", "16in", "24in"]
-        last_tex_src = ""
+    for text_height in height_candidates:
+        tex_src = (
+            _LATEX_TEMPLATE.replace("@@RENEW_STUBS@@", renew_stubs)
+            .replace("@@PREAMBLE_MACROS@@", preamble_macros)
+            .replace("@@FIGURE_BODY@@", figure_body)
+            .replace("@@TEXT_WIDTH@@", text_width)
+            .replace("@@COLUMN_WIDTH@@", col_width)
+            .replace("@@TEXT_HEIGHT@@", text_height)
+        )
 
-        for text_height in height_candidates:
-            tex_src = (
-                _LATEX_TEMPLATE.replace("@@RENEW_STUBS@@", renew_stubs)
-                .replace("@@PREAMBLE_MACROS@@", preamble_macros)
-                .replace("@@FIGURE_BODY@@", figure_body)
-                .replace("@@TEXT_WIDTH@@", text_width)
-                .replace("@@COLUMN_WIDTH@@", col_width)
-                .replace("@@TEXT_HEIGHT@@", text_height)
-            )
-            last_tex_src = tex_src
-            # Always persist the LaTeX source before compiling so it is
-            # available for both success and failure paths.
-            _write_text(debug_dir / f"{stem}.latex.tex", tex_src)
+        ok = _compile_figure_tex_src_once(
+            tex_src,
+            output_path,
+            figures_dir=figures_dir,
+            source_dir=source_dir,
+            debug_dir=debug_dir,
+            stem=stem,
+        )
+        if not ok:
+            continue
 
-            with tempfile.TemporaryDirectory() as tmpdir_str:
-                tmpdir = Path(tmpdir_str)
-                _copy_tree_contents(source_dir, tmpdir)
-                if figures_dir.exists():
-                    tmp_fig_dir = tmpdir / "figures"
-                    tmp_fig_dir.mkdir(parents=True, exist_ok=True)
-                    for asset in figures_dir.glob("*"):
-                        if asset.is_file():
-                            shutil.copy2(asset, tmp_fig_dir / asset.name)
+        # Clipping check: if content touches the border and we have a taller
+        # candidate remaining, discard and retry with more headroom.
+        if _image_touches_border(output_path) and text_height != height_candidates[-1]:
+            output_path.unlink(missing_ok=True)
+            continue
 
-                tex_file = tmpdir / "figure.tex"
-                tex_file.write_text(tex_src, encoding="utf-8")
+        _clear_debug_artifacts(debug_dir, stem)
+        return True
 
-                result = subprocess.run(
-                    [
-                        "pdflatex",
-                        "-shell-escape",
-                        "-interaction=nonstopmode",
-                        "-halt-on-error",
-                        "figure.tex",
-                    ],
-                    cwd=tmpdir,
-                    capture_output=True,
-                    timeout=60,
-                )
+    return False
 
-                pdf_file = tmpdir / "figure.pdf"
-                log_file = tmpdir / "figure.log"
-                if result.returncode != 0 or not pdf_file.exists():
-                    _write_text(
-                        debug_dir / f"{stem}.latex.stdout.txt",
-                        result.stdout.decode("utf-8", errors="replace"),
-                    )
-                    _write_text(
-                        debug_dir / f"{stem}.latex.stderr.txt",
-                        result.stderr.decode("utf-8", errors="replace"),
-                    )
-                    if log_file.exists():
-                        shutil.copy2(log_file, debug_dir / f"{stem}.latex.log")
-                    continue
 
-                import fitz  # PyMuPDF
-
-                doc = fitz.open(str(pdf_file))
-                if len(doc) == 0:
-                    doc.close()
-                    continue
-
-                page = doc[0]
-                pix = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5), alpha=False)
-                pix.save(str(output_path))
-                doc.close()
-                _trim_whitespace(output_path)
-
-                if (
-                    _image_touches_border(output_path)
-                    and text_height != height_candidates[-1]
-                ):
-                    output_path.unlink(missing_ok=True)
-                    continue
-
-                _clear_debug_artifacts(debug_dir, stem)
-                return True
-
+def _render_figure_latex_with_repair(
+    figure_body: str,
+    output_path: Path,
+    preamble_macros: str,
+    *,
+    renew_stubs: str,
+    figures_dir: Path,
+    source_dir: Path,
+    debug_dir: Path,
+    stem: str,
+    text_width: str = "6.50in",
+    column_width: str = "",
+    max_repair_attempts: int = 3,
+    enable_llm_repair: bool = False,
+) -> bool:
+    """Render a figure with automatic quality check and repair loop."""
+    if shutil.which("pdflatex") is None:
         return False
-    except Exception:
-        _write_text(debug_dir / f"{stem}.latex.tex", locals().get("last_tex_src", ""))
-        return False
+
+    col_width = column_width or text_width
+    tex_src = (
+        _LATEX_TEMPLATE.replace("@@RENEW_STUBS@@", renew_stubs)
+        .replace("@@PREAMBLE_MACROS@@", preamble_macros)
+        .replace("@@FIGURE_BODY@@", figure_body)
+        .replace("@@TEXT_WIDTH@@", text_width)
+        .replace("@@COLUMN_WIDTH@@", col_width)
+        .replace("@@TEXT_HEIGHT@@", "16in")
+    )
+
+    def render_func(ts: str, op: Path) -> bool:
+        return _compile_figure_tex_src_once(
+            ts,
+            op,
+            figures_dir=figures_dir,
+            source_dir=source_dir,
+            debug_dir=debug_dir,
+            stem=stem,
+        )
+
+    result = repair_render(
+        tex_src,
+        output_path,
+        debug_dir,
+        stem,
+        render_func,
+        kind="figure",
+        max_attempts=max_repair_attempts,
+        enable_llm=enable_llm_repair,
+    )
+    if result.success:
+        _clear_debug_artifacts(debug_dir, stem)
+    return result.success
+
+
+def _render_figure_latex(
+    figure_body: str,
+    output_path: Path,
+    preamble_macros: str,
+    *,
+    renew_stubs: str,
+    figures_dir: Path,
+    source_dir: Path,
+    debug_dir: Path,
+    stem: str,
+    text_width: str = "6.50in",
+    column_width: str = "",
+    repair: bool = False,
+    max_repair_attempts: int = 3,
+    enable_llm_repair: bool = False,
+) -> bool:
+    """Compile a standalone figure and rasterise it to PNG.
+
+    When ``repair`` is True, a check → diagnose → repair → re-render loop is
+    used instead of the original one-shot height-candidate loop.
+    """
+    if not repair:
+        return _render_figure_latex_once(
+            figure_body,
+            output_path,
+            preamble_macros,
+            renew_stubs=renew_stubs,
+            figures_dir=figures_dir,
+            source_dir=source_dir,
+            debug_dir=debug_dir,
+            stem=stem,
+            text_width=text_width,
+            column_width=column_width,
+        )
+    return _render_figure_latex_with_repair(
+        figure_body,
+        output_path,
+        preamble_macros,
+        renew_stubs=renew_stubs,
+        figures_dir=figures_dir,
+        source_dir=source_dir,
+        debug_dir=debug_dir,
+        stem=stem,
+        text_width=text_width,
+        column_width=column_width,
+        max_repair_attempts=max_repair_attempts,
+        enable_llm_repair=enable_llm_repair,
+    )
 
 
 def _resolve_image(stem: str, figures_dir: Path) -> Optional[Path]:
@@ -687,6 +811,9 @@ def parse_figures(
     figures_dir: Path,
     max_figures: int = 15,
     force_rerender: bool = False,
+    repair: bool = False,
+    max_repair_attempts: int = 3,
+    enable_llm_repair: bool = False,
 ) -> list[FigureInfo]:
     """
     Parse a merged LaTeX file and return FigureInfo objects for figures that
@@ -700,6 +827,11 @@ def parse_figures(
     4. Convert .pdf figures to .png via PyMuPDF.
     5. Skip files that are missing, unconvertible, or exceed 18 MB.
     6. Stop after max_figures valid figures.
+
+    Args:
+        repair: enable the check → diagnose → repair → re-render loop.
+        max_repair_attempts: maximum repair iterations per figure.
+        enable_llm_repair: allow LLM fallback after rule-based fixes fail.
     """
     if not tex_path.exists() or not figures_dir.exists():
         return []
@@ -777,6 +909,9 @@ def parse_figures(
                     stem=stem,
                     text_width=text_width,
                     column_width=col_width,
+                    repair=repair,
+                    max_repair_attempts=max_repair_attempts,
+                    enable_llm_repair=enable_llm_repair,
                 )
                 if not ok:
                     _write_render_json(

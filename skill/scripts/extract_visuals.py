@@ -41,6 +41,27 @@ def main():
         action="store_true",
         help="Force re-render even if cached PNGs exist",
     )
+    parser.add_argument(
+        "--repair",
+        action="store_true",
+        help="Enable check → diagnose → repair → re-render loop for bad renders",
+    )
+    parser.add_argument(
+        "--no-repair",
+        action="store_true",
+        help="Disable the repair loop even if config.yaml has enable_render_repair: true",
+    )
+    parser.add_argument(
+        "--max-repair-attempts",
+        type=int,
+        default=None,
+        help="Maximum repair iterations per figure/table",
+    )
+    parser.add_argument(
+        "--enable-llm-repair",
+        action="store_true",
+        help="Allow LLM fallback after rule-based fixes are exhausted",
+    )
     args = parser.parse_args()
 
     paper_dir = Path(args.paper_dir)
@@ -58,6 +79,26 @@ def main():
     max_figures = args.max_figures or llm_config.get("max_figures", 15)
     max_tables = args.max_tables or llm_config.get("max_tables", 10)
 
+    # Repair loop settings: CLI overrides config.
+    # --no-repair forces it off; --repair forces it on; otherwise follow config.
+    if args.no_repair:
+        repair = False
+    elif args.repair:
+        repair = True
+    else:
+        repair = llm_config.get("enable_render_repair", False)
+
+    max_repair_attempts = (
+        args.max_repair_attempts
+        if args.max_repair_attempts is not None
+        else llm_config.get("repair_max_attempts", 3)
+    )
+    enable_llm_repair = (
+        args.enable_llm_repair
+        if args.enable_llm_repair
+        else llm_config.get("enable_llm_render_repair", False)
+    )
+
     figures_dir = paper_dir / "figures"
     tables_dir = paper_dir / "tables"
     figures_dir.mkdir(exist_ok=True)
@@ -70,6 +111,9 @@ def main():
         figures_dir=figures_dir,
         max_figures=max_figures,
         force_rerender=args.rerender,
+        repair=repair,
+        max_repair_attempts=max_repair_attempts,
+        enable_llm_repair=enable_llm_repair,
     )
 
     tables = parse_tables(
@@ -77,6 +121,9 @@ def main():
         tables_dir=tables_dir,
         max_tables=max_tables,
         force_rerender=args.rerender,
+        repair=repair,
+        max_repair_attempts=max_repair_attempts,
+        enable_llm_repair=enable_llm_repair,
     )
 
     visuals_data = []

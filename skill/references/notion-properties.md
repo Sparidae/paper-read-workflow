@@ -1,11 +1,11 @@
 # Notion Database Properties
 
-How `notion_schema.yaml` maps to what `notion_service.py` writes.
+How `backends/notion/schema.yaml` maps to what `notion_service.py` writes.
 
 ## Schema Definition
 
 ```yaml
-# notion_schema.yaml
+# backends/notion/schema.yaml
 title: "Papers"
 properties:
   论文笔记:    # title property (page title)

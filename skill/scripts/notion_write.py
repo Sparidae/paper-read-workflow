@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
-import os
 import re
 import sys
 import tempfile
@@ -25,7 +24,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 import httpx
-from _lib import find_project_root, load_config, output_error, output_ok
+from _backend_config import BackendConfigError, load_notion_config
+from _lib import load_config, output_error, output_ok
 
 _NOTION_VERSION = "2022-06-28"
 _NOTION_FILE_VERSION = "2026-03-11"
@@ -49,33 +49,9 @@ _TABLE_MARKER = re.compile(r"^\[TABLE[:\s]*(\d+)\]$", re.IGNORECASE)
 # ── Notion schema loading ────────────────────────────────────────────────────
 
 
-def _load_notion_config() -> dict[str, Any]:
+def _load_notion_config(interactive: bool = True) -> dict[str, Any]:
     """Load Notion token, database_id, and property mapping."""
-    import yaml
-
-    load_config()  # ensures .env is loaded
-    token = os.getenv("NOTION_TOKEN", "")
-    database_id = os.getenv("NOTION_DATABASE_ID", "")
-
-    if not token or not database_id:
-        output_error("NOTION_TOKEN and NOTION_DATABASE_ID must be set in .env")
-        sys.exit(1)
-
-    schema_path = find_project_root() / "notion_schema.yaml"
-    if schema_path.exists():
-        with open(schema_path) as f:
-            schema = yaml.safe_load(f) or {}
-        notion_cfg = schema.get("notion", {})
-    else:
-        notion_cfg = {}
-
-    return {
-        "token": token,
-        "database_id": database_id,
-        "properties": notion_cfg.get("properties", {}),
-        "status_type": notion_cfg.get("status_type", "checkbox"),
-        "default_status": notion_cfg.get("default_status", "Unread"),
-    }
+    return load_notion_config(interactive=interactive)
 
 
 # ── Rich text / block builders ───────────────────────────────────────────────
@@ -655,6 +631,11 @@ def main():
         "--force", action="store_true", help="Archive existing page and re-create"
     )
     parser.add_argument("--skip-images", action="store_true", help="Skip image uploads")
+    parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Do not prompt for missing backend config; emit a structured error",
+    )
     args = parser.parse_args()
 
     paper_dir = Path(args.paper_dir)
@@ -664,7 +645,16 @@ def main():
         return
 
     metadata = json.loads(metadata_path.read_text())
-    notion_cfg = _load_notion_config()
+    try:
+        notion_cfg = _load_notion_config(interactive=not args.non_interactive)
+    except BackendConfigError as e:
+        output_error(
+            f"Notion backend needs configuration: {e}",
+            backend=e.backend,
+            missing=e.missing,
+            hint="Run interactively or fill backends/notion/backend.yaml",
+        )
+        sys.exit(1)
     token = notion_cfg["token"]
     database_id = notion_cfg["database_id"]
     props_map = notion_cfg["properties"]

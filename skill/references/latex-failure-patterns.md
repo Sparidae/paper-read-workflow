@@ -39,11 +39,10 @@ papers/<paper_dir>/debug/
 ### 2. Reproduce in Isolation
 
 ```bash
-bash .claude/skills/paper-reading-workflow/scripts/debug-figure.sh \
-  papers/<paper_dir>/paper.tex <N>
+uv run skill/scripts/debug_render.py <paper-dir> --type figure --index <N>
 ```
 
-This extracts figure N from the merged `paper.tex` and compiles it standalone.
+This re-renders figure N from the paper directory in isolation.
 
 ### 3. Identify the Root Cause
 
@@ -110,3 +109,75 @@ uv run paper-tool add <known_good_url> --force --rerender-figures --rerender-tab
 Refer to `git log --oneline` for specific commits:
 - `6f7707c` — body-internal macro definitions not being injected, causing table LaTeX compilation to degrade to matplotlib
 - Check history for other parser-related fixes
+
+---
+
+## Render Repair Loop
+
+`skill/scripts/extract_visuals.py` now supports an optional **check → diagnose → repair → re-render** loop (`--repair`). The loop is implemented in `skill/scripts/_render_repair.py` and used by both `_figure_extractor.py` and `_table_extractor.py`.
+
+### What triggers a repair
+
+A render is considered "bad" when any of the following is true:
+
+- No PNG output was produced.
+- A table fell back to the `matplotlib` renderer (LaTeX compile failed).
+- The image content touches the border (likely clipped).
+- The output is blank/white, extremely tiny, huge, or has an extreme aspect ratio.
+
+### How the loop works
+
+1. Compile the standalone LaTeX source.
+2. Run `check_render_quality()` on the resulting PNG.
+3. If quality is OK, stop.
+4. Otherwise, read the pdflatex log and call `apply_rule_fix()`.
+5. Rule fixes are applied one at a time, in order:
+   - missing packages → add `\usepackage{pkg}`
+   - undefined commands → add `\providecommand{\cmd}{...}`
+   - missing external files → stub out the loading command
+   - visual clipping → increase `\textheight` or add `\standaloneconfig`
+   - blank/extreme tables → strip `\resizebox` / `\scalebox` / `\adjustbox` / `center` / `\centering`
+6. If rule fixes are exhausted and `enable_llm_render_repair` is true, call an LLM with the failing source + log and use the corrected source it returns.
+7. Re-render and re-check. Repeat up to `repair_max_attempts` times.
+
+Every attempt writes debug artifacts:
+
+```
+papers/<paper_dir>/debug/
+├── <stem>.attempt_1.latex.tex
+├── <stem>.attempt_1.latex.log
+├── <stem>.attempt_1.quality.json
+├── <stem>.attempt_2.latex.tex
+└── ...
+```
+
+### Enabling the loop
+
+CLI:
+
+```bash
+uv run skill/scripts/extract_visuals.py <paper-dir> --rerender --repair
+uv run skill/scripts/extract_visuals.py <paper-dir> --rerender --repair --enable-llm-repair
+```
+
+Config (`config.yaml`):
+
+```yaml
+llm:
+  enable_render_repair: true
+  enable_llm_render_repair: false
+  repair_max_attempts: 3
+  repair_model: ""
+  repair_max_output_tokens: 16000
+```
+
+### Adding new rule fixes
+
+To add a new deterministic fix:
+
+1. Open `skill/scripts/_render_repair.py`.
+2. Add the package/command/regex to the appropriate catalog (`_KNOWN_PACKAGES`, `_SAFE_STUBS`, or a new helper).
+3. Call the helper inside `apply_rule_fix()` with a unique `previous_fixes` key.
+4. Update this document with the new pattern.
+
+Rule fixes are preferred over LLM fixes because they are fast, deterministic, and do not consume API quota.

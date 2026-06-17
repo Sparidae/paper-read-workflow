@@ -1,0 +1,32 @@
+# 飞书（Lark）后端配置
+# 复制此文件为 backend.yaml 并填写实际值，或让 skill 在运行时自动引导你配置。
+
+enabled: false
+
+auth:
+  # 身份类型：user（使用 lark-cli auth login 后的用户身份）| bot（应用身份）
+  identity: user
+  # 可选：指定 lark-cli profile 名，留空使用默认 profile
+  profile: ""
+
+storage:
+  # docx  - 创建飞书 docx 文档
+  # wiki  - 写入知识库（需配置 knowledge_base）
+  # folder - 仅上传到云空间文件夹（暂不支持）
+  type: docx
+  # 父文件夹 token；留空则创建到「我的空间」根目录
+  parent_token: ""
+  folder_token: ""
+
+knowledge_base:
+  # 知识库空间 ID（仅 storage.type = wiki 时使用）
+  wiki_space_id: ""
+  # 知识库父节点 token
+  wiki_parent_node_token: ""
+
+format:
+  # 是否在图片下方附带中文 caption
+  include_captions: true
+  # inline - 图片插入到 notes 中 [FIGURE:N] / [TABLE:N] 标记的位置
+  # end    - 图片统一放在文档末尾
+  image_position: inline
