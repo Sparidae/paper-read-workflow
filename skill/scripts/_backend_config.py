@@ -383,12 +383,16 @@ def load_lark_config(interactive: bool = True) -> dict[str, Any]:
     cfg = require_backend_config("lark", interactive=interactive)
     auth = cfg.get("auth", {})
     storage = cfg.get("storage", {})
+    knowledge_base = cfg.get("knowledge_base", {})
     fmt = cfg.get("format", {})
     return {
         "identity": auth.get("identity", "user"),
         "profile": auth.get("profile", ""),
+        "storage_type": storage.get("type", "docx"),
         "parent_token": storage.get("parent_token", ""),
         "folder_token": storage.get("folder_token", ""),
+        "wiki_space_id": knowledge_base.get("wiki_space_id", ""),
+        "wiki_parent_node_token": knowledge_base.get("wiki_parent_node_token", ""),
         "include_captions": fmt.get("include_captions", True),
         "image_position": fmt.get("image_position", "inline"),
     }

@@ -59,19 +59,43 @@ def _lark(*args: str, stdin_content: str | None = None) -> dict:
         )
 
 
+_TITLE_RE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+
+
 def _load_lark_config(interactive: bool = True) -> dict:
     """Load Lark configuration from backends/lark/backend.yaml."""
     cfg = load_lark_config(interactive=interactive)
     return {
         "identity": cfg["identity"],
-        "parent_token": cfg["parent_token"],
+        "parent_token": cfg.get("parent_token", ""),
+        "storage_type": cfg.get("storage_type", "docx"),
+        "wiki_space_id": cfg.get("wiki_space_id", ""),
     }
 
 
+def _extract_title(xml_content: str) -> str:
+    """Extract text inside the first <title> tag."""
+    m = _TITLE_RE.search(xml_content)
+    return m.group(1).strip() if m else "未命名文档"
+
+
 def _create_doc(xml_content: str, lark_cfg: dict) -> dict:
-    """Create a Lark docx document and return parsed response."""
+    """Create a Lark docx document and return parsed response.
+
+    Supports two storage modes:
+      - docx: create directly in Drive (default, may specify parent folder)
+      - wiki: create in Drive then move into the configured wiki space
+    """
+    storage_type = lark_cfg.get("storage_type", "docx")
+    if storage_type == "wiki":
+        return _create_wiki_doc(xml_content, lark_cfg)
+    return _create_drive_doc(xml_content, lark_cfg)
+
+
+def _create_drive_doc(xml_content: str, lark_cfg: dict) -> dict:
+    """Create a docx document in Lark Drive."""
     identity = lark_cfg["identity"]
-    parent_token = lark_cfg["parent_token"]
+    parent_token = lark_cfg.get("parent_token", "")
 
     args = [
         "docs",
@@ -87,6 +111,50 @@ def _create_doc(xml_content: str, lark_cfg: dict) -> dict:
         args.extend(["--parent-token", parent_token])
 
     return _lark(*args)
+
+
+def _create_wiki_doc(xml_content: str, lark_cfg: dict) -> dict:
+    """Create a docx in Drive then move it to the configured wiki space root."""
+    identity = lark_cfg["identity"]
+    space_id = lark_cfg.get("wiki_space_id", "")
+    if not space_id:
+        raise RuntimeError("storage.type=wiki requires knowledge_base.wiki_space_id")
+
+    # 1. Create the docx in the user's Drive library first.
+    drive_result = _create_drive_doc(
+        xml_content, {"identity": identity, "parent_token": ""}
+    )
+    doc_id = drive_result["data"]["document"]["document_id"]
+    drive_url = drive_result["data"]["document"]["url"]
+
+    # 2. Move the Drive doc into the wiki space root.
+    move_result = _lark(
+        "wiki",
+        "+move",
+        "--obj-token",
+        doc_id,
+        "--obj-type",
+        "docx",
+        "--target-space-id",
+        space_id,
+        "--as",
+        identity,
+    )
+    data = move_result.get("data", {})
+    wiki_token = data.get("wiki_token", "")
+    wiki_url = f"https://my.feishu.cn/wiki/{wiki_token}" if wiki_token else ""
+
+    return {
+        "data": {
+            "document": {
+                "document_id": doc_id,
+                "url": wiki_url or drive_url,
+                "wiki_token": wiki_token,
+                "drive_url": drive_url,
+                "title": _extract_title(xml_content),
+            }
+        }
+    }
 
 
 def _relative_to_cwd(path: Path) -> Path:

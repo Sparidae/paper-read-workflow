@@ -1,7 +1,7 @@
 # 飞书（Lark）后端配置
 # 复制此文件为 backend.yaml 并填写实际值，或让 skill 在运行时自动引导你配置。
 
-enabled: false
+enabled: true
 
 auth:
   # 身份类型：user（使用 lark-cli auth login 后的用户身份）| bot（应用身份）
@@ -13,15 +13,16 @@ storage:
   # docx  - 创建飞书 docx 文档
   # wiki  - 写入知识库（需配置 knowledge_base）
   # folder - 仅上传到云空间文件夹（暂不支持）
-  type: docx
-  # 父文件夹 token；留空则创建到「我的空间」根目录
+  type: wiki
+  # 父文件夹 token；仅 storage.type = docx 时有效
   parent_token: ""
   folder_token: ""
 
 knowledge_base:
   # 知识库空间 ID（仅 storage.type = wiki 时使用）
-  wiki_space_id: ""
-  # 知识库父节点 token
+  # 默认使用名为「论文」的空间
+  wiki_space_id: "7652378011303447766"
+  # 知识库父节点 token；留空则创建到空间根目录
   wiki_parent_node_token: ""
 
 format:
